@@ -1,4 +1,4 @@
-import { Embed, EmbedBuilder, MessageFlags, SlashCommandBuilder } from "discord.js";
+import { EmbedBuilder, MessageFlags, SlashCommandBuilder } from "discord.js";
 import type { Plugin, PluginContext, Command } from "@types";
 import { z } from "zod";
 import { CoreUtilsAPI } from "plugins/core-utils/plugin";
@@ -21,8 +21,9 @@ const plugin: Plugin<typeof configSchema> = {
         name: "RPG Core",
         version: "1.0.0",
         description: "Allows member to select RPG classes and manage their stats.",
-        dependencies: {
-            soft: ["core"],
+            dependencies: {
+            hard: ["core-utils"],
+            soft: [],
         },
     },
 
@@ -57,7 +58,10 @@ const plugin: Plugin<typeof configSchema> = {
 
                 switch (subcommand) {
                     case "choose-class":
-                        let rpg_menu_embed = coreUtils?.api.embeds.create().setTitle("Choose Your RPG Class").setDescription("Select a class to start your adventure!");
+
+                        // prefer using the core-utils embed helpers if available
+                        const api = coreUtils?.api;
+                        let rpg_menu_embed = api!.embeds.create().setTitle("Choose Your RPG Class").setDescription("Select a class to start your adventure!");
 
                         // send embed
                         await interaction.reply({ embeds: [rpg_menu_embed], flags: MessageFlags.Ephemeral });
