@@ -1,0 +1,42 @@
+# Economy plugin configuration
+
+# Name of the currency (plural)
+currencyName: coins
+# Symbol/emoji for the currency
+currencySymbol: 🪙
+# Starting wallet balance for new users
+startingBalance: 100
+# Amount earned from daily reward
+dailyAmount: 100
+# Hours between daily claims
+dailyCooldown: 24
+# Work command settings
+work:
+  # Enable work commands
+  enabled: true
+  # Hours between work commands
+  cooldown: 1
+  # Minimum payout from work
+  minPayout: 50
+  # Maximum payout from work
+  maxPayout: 150
+# Gambling settings
+gambling:
+  # Enable gambling commands
+  enabled: true
+  # Minimum bet amount
+  minBet: 10
+  # Maximum bet amount
+  maxBet: 1000
+# Bank system settings
+bank:
+  # Enable bank system
+  enabled: true
+  # Daily interest rate percentage
+  interestRate: 5
+  # Maximum bank balance
+  maxBalance: 100000
+# Shop settings
+shop:
+  # Enable shop system
+  enabled: true

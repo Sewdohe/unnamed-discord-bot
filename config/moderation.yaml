@@ -1,0 +1,54 @@
+# Moderation plugin configuration
+
+# Moderation log settings
+modLog:
+  # Enable logging moderation actions to a channel
+  enabled: true
+# Control DM notifications to users
+dmUsers:
+  # DM users when they are warned
+  onWarn: true
+  # DM users when they are timed out
+  onTimeout: true
+  # DM users when they are kicked
+  onKick: true
+  # DM users when they are banned
+  onBan: true
+# Require a reason for all moderation actions
+requireReason: false
+# Days of messages to delete when banning (0-7)
+deleteMessagesOnBan: 7
+# Automatic moderation settings
+autoMod:
+  # Filter messages containing banned words
+  messageFilter:
+    # Enable message content filtering
+    enabled: false
+    # List of words/phrases to filter (case-insensitive)
+    words: []
+    # Actions to take (can specify multiple): delete, warn, timeout, kick
+    actions:
+      - delete
+      - warn
+    # Duration for timeout action (e.g., 10m, 1h, 1d)
+    timeoutDuration: 10m
+    # Role IDs that bypass the message filter
+    exemptRoles: []
+    # Channel IDs where the filter doesn't apply
+    exemptChannels: []
+  # Filter unauthorized Discord invite links
+  inviteFilter:
+    # Enable Discord invite link filtering
+    enabled: true
+    # Actions to take (can specify multiple): delete, warn, timeout, kick
+    actions:
+      - delete
+      - warn
+    # Duration for timeout action (e.g., 10m, 1h, 1d)
+    timeoutDuration: 10m
+    # Invite codes that are allowed (e.g., ['abc123'])
+    allowedInvites: []
+    # Role IDs that can post invite links
+    exemptRoles: []
+    # Channel IDs where invites are allowed
+    exemptChannels: []
