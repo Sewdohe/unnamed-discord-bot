@@ -37,10 +37,10 @@ export function guildMemberAddHandler(ctx: PluginContext<VerificationConfig>, ap
       // Skip if verification is disabled
       if (!ctx.config.enabled) return;
 
-      const repo = createVerificationRepo(ctx);
+      const repo = createVerificationRepo(ctx, api);
 
       // Create verification record
-      repo.create(member.id, member.guild.id);
+      repo.createRecord(member.id, member.guild.id);
 
       ctx.logger.info(`New member joined: ${member.user.tag} (${member.id})`);
 

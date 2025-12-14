@@ -22,7 +22,11 @@ import {
   TextInputStyle,
 } from "discord.js";
 import { z } from "zod";
-import type { Plugin, PluginContext } from "@types";
+import type { Plugin, PluginContext, QueryBuilder, SchemaValidator } from "@types";
+import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import { createQueryBuilder } from "../../src/core/query-builder";
+import { BaseRepository } from "../../src/core/repository";
+import { createSchemaValidator, commonSchemas } from "../../src/core/schema";
 
 // ============ Configuration ============
 
@@ -60,6 +64,42 @@ export interface CoreUtilsAPI {
   paginate: PaginateFunction;
   components: ComponentsHelpers;
   confirm: ConfirmFunction;
+  database: DatabaseHelpers;
+}
+
+interface DatabaseHelpers {
+  /**
+   * Create a query builder for a table (automatically prefixed)
+   * @param ctx Plugin context
+   * @param tableName Table name (will be prefixed with plugin name)
+   */
+  createQueryBuilder<T = unknown>(ctx: PluginContext, tableName: string): QueryBuilder<T>;
+
+  /**
+   * Create a repository instance for a table
+   * @param ctx Plugin context
+   * @param tableName Table name (will be prefixed)
+   * @param RepositoryClass Repository class constructor
+   * @param primaryKey Primary key field name (default: 'id')
+   * @param validator Optional Zod schema validator
+   */
+  createRepository<T, TCreate = Partial<T>, TUpdate = Partial<T>>(
+    ctx: PluginContext,
+    tableName: string,
+    RepositoryClass: new (db: BunSQLiteDatabase, tableName: string, primaryKey: string, validator?: SchemaValidator<T>) => BaseRepository<T, TCreate, TUpdate>,
+    primaryKey?: string,
+    validator?: SchemaValidator<T>
+  ): BaseRepository<T, TCreate, TUpdate>;
+
+  /**
+   * Create a schema validator from a Zod schema
+   */
+  createValidator<T extends z.ZodTypeAny>(schema: T): SchemaValidator<z.infer<T>>;
+
+  /**
+   * Common Zod schemas for Discord/database fields
+   */
+  schemas: typeof commonSchemas;
 }
 
 interface PermissionHelpers {
@@ -288,6 +328,7 @@ const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
       paginate: createPaginateFunction(ctx),
       components: createComponentsHelpers(),
       confirm: createConfirmFunction(ctx),
+      database: createDatabaseHelpers(),
     };
 
     // Expose API
@@ -320,6 +361,34 @@ const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
     ctx.logger.info("Core utilities loaded!");
   },
 };
+
+// ============ Database Helpers ============
+
+function createDatabaseHelpers(): DatabaseHelpers {
+  return {
+    createQueryBuilder<T = unknown>(ctx: PluginContext, tableName: string) {
+      const prefixedTable = `${ctx.dbPrefix}${tableName}`;
+      return createQueryBuilder<T>(ctx.db, prefixedTable);
+    },
+
+    createRepository<T, TCreate = Partial<T>, TUpdate = Partial<T>>(
+      ctx: PluginContext,
+      tableName: string,
+      RepositoryClass: new (db: BunSQLiteDatabase, tableName: string, primaryKey: string, validator?: SchemaValidator<T>) => BaseRepository<T, TCreate, TUpdate>,
+      primaryKey: string = 'id',
+      validator?: SchemaValidator<T>
+    ) {
+      const prefixedTable = `${ctx.dbPrefix}${tableName}`;
+      return new RepositoryClass(ctx.db, prefixedTable, primaryKey, validator);
+    },
+
+    createValidator<T extends z.ZodTypeAny>(schema: T) {
+      return createSchemaValidator(schema);
+    },
+
+    schemas: commonSchemas,
+  };
+}
 
 // ============ Permission Helpers ============
 

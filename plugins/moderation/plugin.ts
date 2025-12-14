@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Plugin, PluginContext } from "@types";
 import type { CoreUtilsAPI } from "../core-utils/plugin";
-import { initDatabase } from "./db/repository";
+import { initDatabase, createModerationRepo } from "./db/repository";
 import {
   kickCommand,
   banCommand,
@@ -118,22 +118,25 @@ const plugin: Plugin<typeof configSchema> = {
     // Initialize database
     await initDatabase(ctx);
 
+    // Create repository
+    const moderationRepo = createModerationRepo(ctx, api);
+
     // Register commands
-    ctx.registerCommand(kickCommand(ctx, api));
-    ctx.registerCommand(banCommand(ctx, api));
-    ctx.registerCommand(unbanCommand(ctx, api));
-    ctx.registerCommand(timeoutCommand(ctx, api));
-    ctx.registerCommand(warnCommand(ctx, api));
-    ctx.registerCommand(purgeCommand(ctx, api));
-    ctx.registerCommand(lockCommand(ctx, api));
-    ctx.registerCommand(unlockCommand(ctx, api));
-    ctx.registerCommand(caseCommand(ctx, api));
-    ctx.registerCommand(historyCommand(ctx, api));
-    ctx.registerCommand(editCaseCommand(ctx, api));
+    ctx.registerCommand(kickCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(banCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(unbanCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(timeoutCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(warnCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(purgeCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(lockCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(unlockCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(caseCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(historyCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(editCaseCommand(ctx, api, moderationRepo));
 
     // Register auto-mod event handlers
     if (ctx.config.autoMod.messageFilter.enabled || ctx.config.autoMod.inviteFilter.enabled) {
-      ctx.registerEvent(autoModEvent(ctx, api));
+      ctx.registerEvent(autoModEvent(ctx, api, moderationRepo));
     }
 
     ctx.logger.info("Moderation plugin loaded!");

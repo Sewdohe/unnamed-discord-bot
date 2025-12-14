@@ -695,149 +695,361 @@ Users can edit these files to configure your plugin. Changes require bot restart
 
 ## Database
 
-### Creating Tables
+The framework provides a powerful database abstraction layer that eliminates SQL injection vulnerabilities, provides type safety, and simplifies common database operations. **Always use this abstraction instead of writing raw SQL.**
+
+### Database API (via core-utils)
+
+The core-utils plugin provides a database helper API that makes working with databases safe and easy:
 
 ```typescript
+import type { CoreUtilsAPI } from "../core-utils/plugin";
+
+const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
+const api = coreUtils.api;
+
+// api.database provides:
+// - createQueryBuilder<T>(ctx, tableName) - Build safe SQL queries
+// - createRepository(ctx, tableName, RepoClass, primaryKey?, validator?) - Create repository instances
+// - createValidator(schema) - Create Zod validators
+// - schemas - Common Zod schemas (discordId, timestamp, boolean)
+```
+
+### Repository Pattern (Recommended)
+
+The repository pattern provides a clean, type-safe interface for database operations. This is the **recommended approach** for all plugins.
+
+#### Step 1: Define Your Data Types
+
+```typescript
+// db/repository.ts
+import { BaseRepository } from "../../../src/core/repository";
+import type { PluginContext } from "@types";
+import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import type { CoreUtilsAPI } from "../../core-utils/plugin";
 import { sql } from "drizzle-orm";
 
-async onLoad(ctx) {
-  const tableName = `${ctx.dbPrefix}users`; // e.g., "myplugin_users"
+export interface User {
+  id: number;
+  discord_id: string;
+  balance: number;
+  created_at: string;
+}
+```
+
+#### Step 2: Create Repository Class
+
+```typescript
+export class UserRepository extends BaseRepository<User> {
+  constructor(db: BunSQLiteDatabase, tableName: string) {
+    super(db, tableName, 'id'); // 'id' is the primary key
+  }
+
+  /**
+   * Get user by Discord ID
+   */
+  findByDiscordId(discordId: string): User | null {
+    return this.query()
+      .where('discord_id', '=', discordId)
+      .first();
+  }
+
+  /**
+   * Create a new user
+   */
+  createUser(discordId: string, initialBalance: number = 0): number {
+    // Using parameterized query (safe from SQL injection)
+    const query = sql`INSERT INTO ${sql.raw(this.tableName)} (discord_id, balance) VALUES (${discordId}, ${initialBalance})`;
+    this.db.run(query);
+
+    const result = this.db.get<{ id: number }>(sql.raw('SELECT last_insert_rowid() as id'));
+    return result?.id ?? 0;
+  }
+
+  /**
+   * Update user balance
+   */
+  updateBalance(userId: number, newBalance: number): boolean {
+    return this.update(userId, { balance: newBalance });
+  }
+
+  /**
+   * Get top users by balance
+   */
+  getTopUsers(limit: number = 10): User[] {
+    return this.query()
+      .orderBy('balance', 'DESC')
+      .limit(limit)
+      .all();
+  }
+
+  /**
+   * Find or create user
+   */
+  findOrCreate(discordId: string, defaultBalance: number = 0): User {
+    let user = this.findByDiscordId(discordId);
+    if (!user) {
+      const id = this.createUser(discordId, defaultBalance);
+      user = this.find(id)!;
+    }
+    return user;
+  }
+}
+```
+
+#### Step 3: Create Factory Function
+
+```typescript
+/**
+ * Factory function to create repository
+ */
+export function createUserRepo(
+  ctx: PluginContext,
+  api: CoreUtilsAPI
+): UserRepository {
+  return api.database.createRepository(ctx, 'users', UserRepository) as UserRepository;
+}
+
+/**
+ * Initialize database table
+ */
+export async function initDatabase(ctx: PluginContext): Promise<void> {
+  const table = `${ctx.dbPrefix}users`;
 
   ctx.db.run(sql.raw(`
-    CREATE TABLE IF NOT EXISTS ${tableName} (
+    CREATE TABLE IF NOT EXISTS ${table} (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id TEXT NOT NULL UNIQUE,
+      discord_id TEXT NOT NULL UNIQUE,
       balance INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `));
+
+  ctx.logger.debug(`Initialized table: ${table}`);
 }
 ```
 
-**Important:** Always use `ctx.dbPrefix` to avoid table name conflicts between plugins.
-
-### Queries
+#### Step 4: Use in Plugin
 
 ```typescript
-import { sql } from "drizzle-orm";
-
-const tableName = `${ctx.dbPrefix}users`;
-
-// Get one row
-const user = ctx.db.get<{ id: number; user_id: string; balance: number }>(
-  sql.raw(`SELECT * FROM ${tableName} WHERE user_id = '${userId}'`)
-);
-
-// Get multiple rows
-const users = ctx.db.all<{ id: number; user_id: string; balance: number }>(
-  sql.raw(`SELECT * FROM ${tableName} ORDER BY balance DESC LIMIT 10`)
-);
-
-// Insert
-ctx.db.run(sql.raw(`
-  INSERT INTO ${tableName} (user_id, balance)
-  VALUES ('${userId}', ${balance})
-`));
-
-// Update
-ctx.db.run(sql.raw(`
-  UPDATE ${tableName}
-  SET balance = ${newBalance}
-  WHERE user_id = '${userId}'
-`));
-
-// Delete
-ctx.db.run(sql.raw(`
-  DELETE FROM ${tableName}
-  WHERE user_id = '${userId}'
-`));
-
-// Upsert
-ctx.db.run(sql.raw(`
-  INSERT INTO ${tableName} (user_id, balance)
-  VALUES ('${userId}', ${amount})
-  ON CONFLICT(user_id) DO UPDATE SET balance = balance + ${amount}
-`));
-```
-
-### Repository Pattern
-
-Organize database operations in separate modules:
-
-```typescript
-// db/users.ts
-import { sql } from "drizzle-orm";
-import type { PluginContext } from "@types";
-
-interface User {
-  id: number;
-  user_id: string;
-  balance: number;
-  created_at: string;
-}
-
-export function createUserRepo(ctx: PluginContext) {
-  const table = `${ctx.dbPrefix}users`;
-
-  return {
-    find(userId: string): User | null {
-      return ctx.db.get<User>(
-        sql.raw(`SELECT * FROM ${table} WHERE user_id = '${userId}'`)
-      ) ?? null;
-    },
-
-    create(userId: string, balance: number = 0): void {
-      ctx.db.run(sql.raw(`
-        INSERT INTO ${table} (user_id, balance)
-        VALUES ('${userId}', ${balance})
-      `));
-    },
-
-    updateBalance(userId: string, newBalance: number): void {
-      ctx.db.run(sql.raw(`
-        UPDATE ${table}
-        SET balance = ${newBalance}
-        WHERE user_id = '${userId}'
-      `));
-    },
-
-    getTop(limit: number = 10): User[] {
-      return ctx.db.all<User>(
-        sql.raw(`SELECT * FROM ${table} ORDER BY balance DESC LIMIT ${limit}`)
-      ) ?? [];
-    },
-
-    findOrCreate(userId: string, defaultBalance: number = 0): User {
-      let user = this.find(userId);
-      if (!user) {
-        this.create(userId, defaultBalance);
-        user = this.find(userId)!;
-      }
-      return user;
-    },
-  };
-}
-```
-
-Usage in plugin:
-
-```typescript
-import { createUserRepo } from "./db/users";
+// plugin.ts
+import { initDatabase, createUserRepo } from "./db/repository";
 
 async onLoad(ctx) {
-  const users = createUserRepo(ctx);
+  // Get core-utils API
+  const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
+  const api = coreUtils.api;
 
+  // Initialize database
+  await initDatabase(ctx);
+
+  // Create repository
+  const userRepo = createUserRepo(ctx, api);
+
+  // Use in commands
   ctx.registerCommand({
     data: new SlashCommandBuilder()
       .setName("balance")
       .setDescription("Check your balance"),
 
     async execute(interaction) {
-      const user = users.findOrCreate(interaction.user.id, 100);
+      const user = userRepo.findOrCreate(interaction.user.id, 100);
       await interaction.reply(`Your balance: ${user.balance} coins`);
     },
   });
+
+  ctx.registerCommand({
+    data: new SlashCommandBuilder()
+      .setName("leaderboard")
+      .setDescription("View top users"),
+
+    async execute(interaction) {
+      const topUsers = userRepo.getTopUsers(10);
+      const description = topUsers
+        .map((u, i) => `${i + 1}. <@${u.discord_id}> - ${u.balance} coins`)
+        .join("\n");
+
+      await interaction.reply({ embeds: [api.embeds.primary(description, "Leaderboard")] });
+    },
+  });
 }
+```
+
+### Query Builder
+
+For custom queries, use the query builder API with method chaining:
+
+```typescript
+const userRepo = createUserRepo(ctx, api);
+
+// Basic queries
+const user = userRepo.query()
+  .where('discord_id', '=', userId)
+  .first();
+
+// Multiple conditions
+const activeUsers = userRepo.query()
+  .where('balance', '>', 0)
+  .where('created_at', '>', '2025-01-01')
+  .all();
+
+// OR conditions
+const users = userRepo.query()
+  .where('balance', '>', 1000)
+  .whereOr('level', '>', 50)
+  .all();
+
+// Ordering and limiting
+const topUsers = userRepo.query()
+  .where('balance', '>', 0)
+  .orderBy('balance', 'DESC')
+  .limit(10)
+  .all();
+
+// Counting
+const count = userRepo.query()
+  .where('balance', '>', 0)
+  .count();
+
+// Updates
+userRepo.query()
+  .where('discord_id', '=', userId)
+  .update({ balance: 500 })
+  .execute();
+
+// Deletes
+userRepo.query()
+  .where('balance', '<', 0)
+  .delete()
+  .execute();
+```
+
+**Supported Operators:**
+- `=`, `!=`, `>`, `<`, `>=`, `<=`
+- `LIKE` - Pattern matching
+- `IN`, `NOT IN` - Array matching
+- `IS`, `IS NOT` - NULL checks
+
+### Base Repository Methods
+
+All repositories extending `BaseRepository` have these built-in methods:
+
+```typescript
+// Find by primary key
+const user = userRepo.find(userId);
+
+// Create new record
+const id = userRepo.create({ discord_id: '123', balance: 100 });
+
+// Update existing record
+const success = userRepo.update(userId, { balance: 200 });
+
+// Delete record
+const deleted = userRepo.delete(userId);
+
+// Get all records
+const allUsers = userRepo.all();
+
+// Get query builder
+const query = userRepo.query();
+```
+
+### Schema Validation (Optional)
+
+Add runtime validation with Zod schemas:
+
+```typescript
+import { z } from "zod";
+
+export function createUserRepo(ctx: PluginContext, api: CoreUtilsAPI): UserRepository {
+  // Create validator
+  const validator = api.database.createValidator(
+    z.object({
+      id: z.number(),
+      discord_id: api.database.schemas.discordId, // Built-in Discord ID validator
+      balance: z.number().min(0),
+      created_at: api.database.schemas.timestamp,  // Built-in timestamp validator
+    })
+  );
+
+  // Pass validator to repository
+  return api.database.createRepository(
+    ctx,
+    'users',
+    UserRepository,
+    'id',
+    validator
+  ) as UserRepository;
+}
+```
+
+**Common Built-in Schemas:**
+- `api.database.schemas.discordId` - Validates Discord snowflake IDs
+- `api.database.schemas.timestamp` - Validates ISO timestamp strings
+- `api.database.schemas.boolean` - Validates SQLite boolean (0/1)
+
+### SQL Injection Prevention
+
+**✅ SAFE - Using parameterized queries:**
+
+```typescript
+// Repository methods (always safe)
+const user = userRepo.query().where('discord_id', '=', userId).first();
+
+// Direct parameterized queries
+const query = sql`SELECT * FROM ${sql.raw(table)} WHERE discord_id = ${userId}`;
+const user = ctx.db.get<User>(query);
+```
+
+**❌ UNSAFE - String interpolation (NEVER DO THIS):**
+
+```typescript
+// This is vulnerable to SQL injection!
+const user = ctx.db.get(sql.raw(`SELECT * FROM ${table} WHERE discord_id = '${userId}'`));
+```
+
+The query builder and repository methods automatically use parameterized queries, making SQL injection impossible.
+
+### Common Patterns
+
+#### Upsert (Insert or Update)
+
+```typescript
+// SQLite's INSERT OR REPLACE
+const query = sql`INSERT OR REPLACE INTO ${sql.raw(this.tableName)}
+  (discord_id, balance) VALUES (${discordId}, ${balance})`;
+this.db.run(query);
+
+// Or use INSERT OR IGNORE
+const query = sql`INSERT OR IGNORE INTO ${sql.raw(this.tableName)}
+  (discord_id, balance) VALUES (${discordId}, ${balance})`;
+this.db.run(query);
+```
+
+#### Transactions
+
+```typescript
+ctx.db.run(sql.raw('BEGIN TRANSACTION'));
+try {
+  userRepo.update(userId1, { balance: balance1 - amount });
+  userRepo.update(userId2, { balance: balance2 + amount });
+  ctx.db.run(sql.raw('COMMIT'));
+} catch (error) {
+  ctx.db.run(sql.raw('ROLLBACK'));
+  throw error;
+}
+```
+
+#### Pagination
+
+```typescript
+const page = 0;
+const pageSize = 10;
+
+const users = userRepo.query()
+  .orderBy('balance', 'DESC')
+  .limit(pageSize)
+  .offset(page * pageSize)
+  .all();
 ```
 
 ---

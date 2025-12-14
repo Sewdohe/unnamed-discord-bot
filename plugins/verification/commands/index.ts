@@ -168,7 +168,7 @@ async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: Cor
     return;
   }
 
-  const repo = createVerificationRepo(ctx);
+  const repo = createVerificationRepo(ctx, api);
 
   // Check if already verified
   if (repo.isVerified(user.id, interaction.guildId!)) {
@@ -184,7 +184,7 @@ async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: Cor
   }
 
   // Add to database if not exists
-  repo.create(user.id, interaction.guildId!);
+  repo.createRecord(user.id, interaction.guildId!);
 
   // Mark as verified
   repo.verify(user.id, interaction.guildId!);
@@ -255,7 +255,7 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
     return;
   }
 
-  const repo = createVerificationRepo(ctx);
+  const repo = createVerificationRepo(ctx, api);
 
   // Check if verified
   if (!repo.isVerified(user.id, interaction.guildId!)) {
@@ -324,7 +324,7 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
 // ============ Handler: Stats ============
 
 async function handleStats(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI, interaction: ChatInputCommandInteraction) {
-  const repo = createVerificationRepo(ctx);
+  const repo = createVerificationRepo(ctx, api);
   const stats = repo.getStats(interaction.guildId!);
 
   const embed = api.embeds.create()

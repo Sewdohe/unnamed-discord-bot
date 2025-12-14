@@ -1,5 +1,9 @@
+import { BaseRepository } from "../../../src/core/repository";
+import type { SchemaValidator, PluginContext } from "@types";
+import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import type { CoreUtilsAPI } from "../../core-utils/plugin";
+import { z } from "zod";
 import { sql } from "drizzle-orm";
-import type { PluginContext } from "@types";
 
 // ============ Types ============
 
@@ -13,6 +17,163 @@ export interface VerificationRecord {
   created_at: string;
 }
 
+// ============ Repository ============
+
+export class VerificationRepository extends BaseRepository<VerificationRecord> {
+  constructor(
+    db: BunSQLiteDatabase,
+    tableName: string,
+    primaryKey: string,
+    validator?: SchemaValidator<VerificationRecord>
+  ) {
+    super(db, tableName, primaryKey, validator);
+  }
+
+  /**
+   * Create a new verification record for a user in a guild
+   * Uses INSERT OR IGNORE to avoid errors if record already exists
+   */
+  createRecord(userId: string, guildId: string): void {
+    const now = new Date().toISOString();
+
+    // Use raw SQL for INSERT OR IGNORE (not supported by query builder)
+    const query = sql`INSERT OR IGNORE INTO ${sql.raw(this.tableName)} (user_id, guild_id, verified, joined_at) VALUES (${userId}, ${guildId}, ${0}, ${now})`;
+    this.db.run(query);
+  }
+
+  /**
+   * Mark a user as verified in a guild
+   */
+  verify(userId: string, guildId: string): void {
+    const now = new Date().toISOString();
+    this.query()
+      .where('user_id', '=', userId)
+      .where('guild_id', '=', guildId)
+      .update({ verified: 1, verified_at: now })
+      .execute();
+  }
+
+  /**
+   * Mark a user as unverified in a guild
+   */
+  unverify(userId: string, guildId: string): void {
+    this.query()
+      .where('user_id', '=', userId)
+      .where('guild_id', '=', guildId)
+      .update({ verified: 0, verified_at: null })
+      .execute();
+  }
+
+  /**
+   * Get a verification record for a user in a guild
+   */
+  get(userId: string, guildId: string): VerificationRecord | null {
+    return this.query()
+      .where('user_id', '=', userId)
+      .where('guild_id', '=', guildId)
+      .first();
+  }
+
+  /**
+   * Check if a user is verified in a guild
+   */
+  isVerified(userId: string, guildId: string): boolean {
+    const record = this.get(userId, guildId);
+    return record?.verified === 1;
+  }
+
+  /**
+   * Get all unverified users in a guild
+   */
+  getUnverified(guildId: string): VerificationRecord[] {
+    return this.query()
+      .where('guild_id', '=', guildId)
+      .where('verified', '=', 0)
+      .orderBy('joined_at', 'DESC')
+      .all();
+  }
+
+  /**
+   * Get all verified users in a guild
+   */
+  getVerified(guildId: string): VerificationRecord[] {
+    return this.query()
+      .where('guild_id', '=', guildId)
+      .where('verified', '=', 1)
+      .orderBy('verified_at', 'DESC')
+      .all();
+  }
+
+  /**
+   * Delete a verification record
+   */
+  deleteRecord(userId: string, guildId: string): boolean {
+    const exists = this.get(userId, guildId) !== null;
+    if (!exists) return false;
+
+    this.query()
+      .where('user_id', '=', userId)
+      .where('guild_id', '=', guildId)
+      .delete()
+      .execute();
+
+    return true;
+  }
+
+  /**
+   * Get all unverified users who joined before a certain timestamp
+   */
+  getUnverifiedBefore(guildId: string, beforeTimestamp: string): VerificationRecord[] {
+    return this.query()
+      .where('guild_id', '=', guildId)
+      .where('verified', '=', 0)
+      .where('joined_at', '<', beforeTimestamp)
+      .orderBy('joined_at', 'ASC')
+      .all();
+  }
+
+  /**
+   * Get verification statistics for a guild
+   */
+  getStats(guildId: string): { total: number; verified: number; unverified: number } {
+    const allRecords = this.query()
+      .where('guild_id', '=', guildId)
+      .all();
+
+    const total = allRecords.length;
+    const verified = allRecords.filter(r => r.verified === 1).length;
+
+    return { total, verified, unverified: total - verified };
+  }
+}
+
+// ============ Factory Function ============
+
+/**
+ * Create a verification repository with schema validation
+ */
+export function createVerificationRepo(
+  ctx: PluginContext,
+  api: CoreUtilsAPI
+): VerificationRepository {
+  // Create schema validator
+  const validator = api.database.createValidator(
+    z.object({
+      id: z.number(),
+      user_id: api.database.schemas.discordId,
+      guild_id: api.database.schemas.discordId,
+      verified: api.database.schemas.boolean,
+      joined_at: api.database.schemas.timestamp,
+      verified_at: api.database.schemas.timestamp.nullable(),
+      created_at: api.database.schemas.timestamp,
+    })
+  );
+
+  // Create repository instance directly
+  const tableName = `${ctx.dbPrefix}verifications`;
+  return new VerificationRepository(ctx.db, tableName, 'id', validator);
+}
+
 // ============ Database Initialization ============
 
 export async function initDatabase(ctx: PluginContext): Promise<void> {
@@ -23,140 +184,13 @@ export async function initDatabase(ctx: PluginContext): Promise<void> {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id TEXT NOT NULL,
       guild_id TEXT NOT NULL,
-      verified INTEGER DEFAULT 0,
-      joined_at TEXT NOT NULL,
+      verified INTEGER NOT NULL DEFAULT 0,
+      joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       verified_at TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(user_id, guild_id)
     )
   `));
 
-  ctx.logger.debug(`Initialized verification table: ${table}`);
-}
-
-// ============ Repository Functions ============
-
-export function createVerificationRepo(ctx: PluginContext) {
-  const table = `${ctx.dbPrefix}verifications`;
-
-  return {
-    /**
-     * Create a new verification record for a user
-     */
-    create(userId: string, guildId: string): void {
-      const now = new Date().toISOString();
-      ctx.db.run(sql.raw(`
-        INSERT OR IGNORE INTO ${table} (user_id, guild_id, verified, joined_at)
-        VALUES ('${userId}', '${guildId}', 0, '${now}')
-      `));
-    },
-
-    /**
-     * Mark a user as verified
-     */
-    verify(userId: string, guildId: string): void {
-      const now = new Date().toISOString();
-      ctx.db.run(sql.raw(`
-        UPDATE ${table}
-        SET verified = 1, verified_at = '${now}'
-        WHERE user_id = '${userId}' AND guild_id = '${guildId}'
-      `));
-    },
-
-    /**
-     * Mark a user as unverified
-     */
-    unverify(userId: string, guildId: string): void {
-      ctx.db.run(sql.raw(`
-        UPDATE ${table}
-        SET verified = 0, verified_at = NULL
-        WHERE user_id = '${userId}' AND guild_id = '${guildId}'
-      `));
-    },
-
-    /**
-     * Get verification record for a user
-     */
-    get(userId: string, guildId: string): VerificationRecord | null {
-      return ctx.db.get<VerificationRecord>(
-        sql.raw(`SELECT * FROM ${table} WHERE user_id = '${userId}' AND guild_id = '${guildId}'`)
-      ) ?? null;
-    },
-
-    /**
-     * Check if a user is verified
-     */
-    isVerified(userId: string, guildId: string): boolean {
-      const record = this.get(userId, guildId);
-      return record?.verified === 1;
-    },
-
-    /**
-     * Get all unverified users in a guild
-     */
-    getUnverified(guildId: string): VerificationRecord[] {
-      return ctx.db.all<VerificationRecord>(
-        sql.raw(`SELECT * FROM ${table} WHERE guild_id = '${guildId}' AND verified = 0 ORDER BY joined_at DESC`)
-      ) ?? [];
-    },
-
-    /**
-     * Get all verified users in a guild
-     */
-    getVerified(guildId: string): VerificationRecord[] {
-      return ctx.db.all<VerificationRecord>(
-        sql.raw(`SELECT * FROM ${table} WHERE guild_id = '${guildId}' AND verified = 1 ORDER BY verified_at DESC`)
-      ) ?? [];
-    },
-
-    /**
-     * Delete a verification record
-     */
-    delete(userId: string, guildId: string): void {
-      ctx.db.run(sql.raw(`
-        DELETE FROM ${table}
-        WHERE user_id = '${userId}' AND guild_id = '${guildId}'
-      `));
-    },
-
-    /**
-     * Get users who joined before a certain time and are still unverified
-     */
-    getUnverifiedBefore(guildId: string, beforeTimestamp: string): VerificationRecord[] {
-      return ctx.db.all<VerificationRecord>(
-        sql.raw(`
-          SELECT * FROM ${table}
-          WHERE guild_id = '${guildId}'
-            AND verified = 0
-            AND joined_at < '${beforeTimestamp}'
-          ORDER BY joined_at ASC
-        `)
-      ) ?? [];
-    },
-
-    /**
-     * Get verification statistics for a guild
-     */
-    getStats(guildId: string): { total: number; verified: number; unverified: number } {
-      const result = ctx.db.get<{ total: number; verified: number }>(
-        sql.raw(`
-          SELECT
-            COUNT(*) as total,
-            SUM(verified) as verified
-          FROM ${table}
-          WHERE guild_id = '${guildId}'
-        `)
-      );
-
-      if (!result) {
-        return { total: 0, verified: 0, unverified: 0 };
-      }
-
-      return {
-        total: Number(result.total) || 0,
-        verified: Number(result.verified) || 0,
-        unverified: (Number(result.total) || 0) - (Number(result.verified) || 0),
-      };
-    },
-  };
+  ctx.logger.debug(`Initialized table: ${table}`);
 }

@@ -6,7 +6,7 @@ import {
 } from "discord.js";
 import type { PluginContext, Command } from "@types";
 import type { CoreUtilsAPI } from "../../core-utils/plugin";
-import { createCase, getCase, getUserCases, updateCaseReason } from "../db/repository";
+import type { ModerationRepository } from "../db/repository";
 import { logToModLog, formatDuration, parseDuration } from "../utils/modlog";
 
 // Import config type from main plugin
@@ -45,7 +45,7 @@ type ModConfig = {
 
 // ============ Kick Command ============
 
-export function kickCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function kickCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("kick")
@@ -103,10 +103,10 @@ export function kickCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): C
       await member.kick(reason);
 
       // Create case
-      const caseId = createCase(ctx, "kick", user, interaction.user, reason);
+      const caseId = repo.createCase("kick", user.id, user.tag, interaction.user.id, interaction.user.tag, reason);
 
       // Log to modlog
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
       if (modCase && ctx.config.modLog.enabled) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }
@@ -123,7 +123,7 @@ export function kickCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): C
 
 // ============ Ban Command ============
 
-export function banCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function banCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("ban")
@@ -183,10 +183,10 @@ export function banCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Co
       });
 
       // Create case
-      const caseId = createCase(ctx, "ban", user, interaction.user, reason);
+      const caseId = repo.createCase("ban", user.id, user.tag, interaction.user.id, interaction.user.tag, reason);
 
       // Log to modlog
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
       if (modCase && ctx.config.modLog.enabled) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }
@@ -203,7 +203,7 @@ export function banCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Co
 
 // ============ Unban Command ============
 
-export function unbanCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function unbanCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("unban")
@@ -241,10 +241,10 @@ export function unbanCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): 
       await interaction.guild.members.unban(userId, reason);
 
       // Create case
-      const caseId = createCase(ctx, "unban", ban.user, interaction.user, reason);
+      const caseId = repo.createCase("unban", ban.user.id, ban.user.tag, interaction.user.id, interaction.user.tag, reason);
 
       // Log to modlog
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
       if (modCase && ctx.config.modLog.enabled) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }
@@ -261,7 +261,7 @@ export function unbanCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): 
 
 // ============ Timeout Command ============
 
-export function timeoutCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function timeoutCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("timeout")
@@ -334,10 +334,10 @@ export function timeoutCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI)
       await member.timeout(duration * 1000, reason);
 
       // Create case
-      const caseId = createCase(ctx, "timeout", user, interaction.user, reason, duration);
+      const caseId = repo.createCase("timeout", user.id, user.tag, interaction.user.id, interaction.user.tag, reason, duration);
 
       // Log to modlog
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
       if (modCase && ctx.config.modLog.enabled) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }
@@ -354,7 +354,7 @@ export function timeoutCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI)
 
 // ============ Warn Command ============
 
-export function warnCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function warnCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("warn")
@@ -391,13 +391,13 @@ export function warnCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): C
       }
 
       // Create case
-      const caseId = createCase(ctx, "warn", user, interaction.user, reason);
+      const caseId = repo.createCase("warn", user.id, user.tag, interaction.user.id, interaction.user.tag, reason);
 
       // Get warning count
-      const warnings = getUserCases(ctx, user.id).filter(c => c.type === "warn");
+      const warnings = repo.getUserCases(user.id).filter(c => c.type === "warn");
 
       // Log to modlog
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
       if (modCase && ctx.config.modLog.enabled) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }
@@ -414,7 +414,7 @@ export function warnCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): C
 
 // ============ Purge Command ============
 
-export function purgeCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function purgeCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("purge")
@@ -470,16 +470,18 @@ export function purgeCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): 
       await channel.bulkDelete(toDelete, true);
 
       // Create case
-      const caseId = createCase(
-        ctx,
+      const targetUserForCase = targetUser ?? interaction.user;
+      const caseId = repo.createCase(
         "purge",
-        targetUser ?? interaction.user,
-        interaction.user,
+        targetUserForCase.id,
+        targetUserForCase.tag,
+        interaction.user.id,
+        interaction.user.tag,
         `Purged ${toDelete.length} messages${targetUser ? ` from ${targetUser.tag}` : ""}${contains ? ` containing "${contains}"` : ""}`
       );
 
       // Log to modlog
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
       if (modCase && ctx.config.modLog.enabled) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }
@@ -496,7 +498,7 @@ export function purgeCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): 
 
 // ============ Lock Command ============
 
-export function lockCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function lockCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("lock")
@@ -530,16 +532,17 @@ export function lockCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): C
       }, { reason });
 
       // Create case
-      const caseId = createCase(
-        ctx,
+      const caseId = repo.createCase(
         "lock",
-        interaction.user,
-        interaction.user,
+        interaction.user.id,
+        interaction.user.tag,
+        interaction.user.id,
+        interaction.user.tag,
         `Locked ${channel.name}: ${reason}`
       );
 
       // Log to modlog
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
       if (modCase && ctx.config.modLog.enabled) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }
@@ -556,7 +559,7 @@ export function lockCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): C
 
 // ============ Unlock Command ============
 
-export function unlockCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function unlockCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("unlock")
@@ -590,16 +593,17 @@ export function unlockCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI):
       }, { reason });
 
       // Create case
-      const caseId = createCase(
-        ctx,
+      const caseId = repo.createCase(
         "unlock",
-        interaction.user,
-        interaction.user,
+        interaction.user.id,
+        interaction.user.tag,
+        interaction.user.id,
+        interaction.user.tag,
         `Unlocked ${channel.name}: ${reason}`
       );
 
       // Log to modlog
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
       if (modCase && ctx.config.modLog.enabled) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }
@@ -616,7 +620,7 @@ export function unlockCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI):
 
 // ============ Case Command ============
 
-export function caseCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function caseCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("case")
@@ -632,7 +636,7 @@ export function caseCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): C
 
     async execute(interaction: any) {
       const caseId = interaction.options.getInteger("id", true);
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
 
       if (!modCase || !modCase.type) {
         await interaction.reply({
@@ -663,7 +667,7 @@ export function caseCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): C
 
 // ============ History Command ============
 
-export function historyCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function historyCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("history")
@@ -678,7 +682,7 @@ export function historyCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI)
 
     async execute(interaction: any) {
       const user = interaction.options.getUser("user", true);
-      const cases = getUserCases(ctx, user.id);
+      const cases = repo.getUserCases(user.id);
 
       if (cases.length === 0) {
         await interaction.reply({
@@ -709,7 +713,7 @@ export function historyCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI)
 
 // ============ Edit Case Command ============
 
-export function editCaseCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Command {
+export function editCaseCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("editcase")
@@ -732,7 +736,7 @@ export function editCaseCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI
       const caseId = interaction.options.getInteger("id", true);
       const newReason = interaction.options.getString("reason", true);
 
-      const success = updateCaseReason(ctx, caseId, newReason);
+      const success = repo.updateCaseReason(caseId, newReason);
 
       if (!success) {
         await interaction.reply({

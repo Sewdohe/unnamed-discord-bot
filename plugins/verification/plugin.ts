@@ -134,7 +134,7 @@ const plugin: Plugin<typeof configSchema> = {
       ],
       async handler(pluginCtx, interaction) {
         // Use ctx from closure instead of pluginCtx parameter (which is core-utils context)
-        const repo = createVerificationRepo(ctx);
+        const repo = createVerificationRepo(ctx, api);
 
         // Check if already verified
         if (repo.isVerified(interaction.user.id, interaction.guildId!)) {
@@ -156,7 +156,7 @@ const plugin: Plugin<typeof configSchema> = {
         }
 
         // Create record if doesn't exist
-        repo.create(interaction.user.id, interaction.guildId!);
+        repo.createRecord(interaction.user.id, interaction.guildId!);
 
         // Mark as verified
         repo.verify(interaction.user.id, interaction.guildId!);

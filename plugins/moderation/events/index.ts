@@ -1,7 +1,7 @@
 import type { PluginContext, Event } from "@types";
 import type { CoreUtilsAPI } from "../../core-utils/plugin";
 import type { GuildMember, User } from "discord.js";
-import { createCase, getCase, type CaseType } from "../db/repository";
+import type { ModerationRepository, CaseType } from "../db/repository";
 import { logToModLog, parseDuration } from "../utils/modlog";
 
 // Import config type from main plugin
@@ -40,7 +40,7 @@ type ModConfig = {
 
 // ============ Auto-Moderation Event ============
 
-export function autoModEvent(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): Event<"messageCreate"> {
+export function autoModEvent(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, repo: ModerationRepository): Event<"messageCreate"> {
   return {
     name: "messageCreate",
     async execute(pluginCtx, message) {
@@ -55,13 +55,13 @@ export function autoModEvent(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): 
 
       // Check message filter
       if (ctx.config.autoMod.messageFilter.enabled) {
-        const filterResult = await checkMessageFilter(ctx, api, message, member);
+        const filterResult = await checkMessageFilter(ctx, api, repo, message, member);
         if (filterResult) return; // Message was handled
       }
 
       // Check invite filter
       if (ctx.config.autoMod.inviteFilter.enabled) {
-        await checkInviteFilter(ctx, api, message, member);
+        await checkInviteFilter(ctx, api, repo, message, member);
       }
     },
   };
@@ -72,6 +72,7 @@ export function autoModEvent(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI): 
 async function checkMessageFilter(
   ctx: PluginContext<ModConfig>,
   api: CoreUtilsAPI,
+  repo: ModerationRepository,
   message: any,
   member: GuildMember
 ): Promise<boolean> {
@@ -99,6 +100,7 @@ async function checkMessageFilter(
   const caseId = await takeAutoModAction(
     ctx,
     api,
+    repo,
     member,
     message.author,
     config.actions,
@@ -128,6 +130,7 @@ async function checkMessageFilter(
 async function checkInviteFilter(
   ctx: PluginContext<ModConfig>,
   api: CoreUtilsAPI,
+  repo: ModerationRepository,
   message: any,
   member: GuildMember
 ): Promise<boolean> {
@@ -163,6 +166,7 @@ async function checkInviteFilter(
   const caseId = await takeAutoModAction(
     ctx,
     api,
+    repo,
     member,
     message.author,
     config.actions,
@@ -192,6 +196,7 @@ async function checkInviteFilter(
 async function takeAutoModAction(
   ctx: PluginContext<ModConfig>,
   api: CoreUtilsAPI,
+  repo: ModerationRepository,
   member: GuildMember,
   user: User,
   actions: string[],
@@ -208,14 +213,16 @@ async function takeAutoModAction(
         case "delete":
           // Just delete (already done), create case if not already created
           if (!caseId) {
-            caseId = createCase(ctx, caseType, user, ctx.client.user!, reason);
+            const botUser = ctx.client.user!;
+            caseId = repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason);
           }
           break;
 
         case "warn":
           // Create case if not already created
           if (!caseId) {
-            caseId = createCase(ctx, caseType, user, ctx.client.user!, reason);
+            const botUser = ctx.client.user!;
+            caseId = repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason);
           }
           // Send DM
           try {
@@ -232,7 +239,8 @@ async function takeAutoModAction(
           if (duration && member.moderatable) {
             await member.timeout(duration * 1000, reason);
             if (!caseId) {
-              caseId = createCase(ctx, caseType, user, ctx.client.user!, reason, duration);
+              const botUser = ctx.client.user!;
+              caseId = repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason, duration);
             }
           }
           break;
@@ -241,7 +249,8 @@ async function takeAutoModAction(
           if (member.kickable) {
             await member.kick(reason);
             if (!caseId) {
-              caseId = createCase(ctx, caseType, user, ctx.client.user!, reason);
+              const botUser = ctx.client.user!;
+              caseId = repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason);
             }
           }
           break;
@@ -250,7 +259,7 @@ async function takeAutoModAction(
 
     // Log to modlog
     if (caseId && ctx.config.modLog.enabled) {
-      const modCase = getCase(ctx, caseId);
+      const modCase = repo.getCase(caseId);
       if (modCase) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }

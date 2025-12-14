@@ -491,64 +491,258 @@ async execute(interaction) {
 
 ## Database Patterns
 
-### Repository Pattern
+**IMPORTANT:** The framework provides a database abstraction layer that prevents SQL injection and provides type safety. **Always use this abstraction instead of writing raw SQL.**
+
+### Database Abstraction Architecture
+
+The database layer consists of:
+1. **Query Builder** (`src/core/query-builder.ts`) - Safe, parameterized SQL query construction
+2. **Base Repository** (`src/core/repository.ts`) - CRUD operations with type safety
+3. **Schema Validation** (`src/core/schema.ts`) - Runtime validation with Zod
+4. **Database API** (via `core-utils`) - Factory methods for creating repositories
+
+All SQL queries use Drizzle's `sql` template tag for parameter binding, preventing SQL injection.
+
+### Repository Pattern (Recommended)
+
+**Step 1: Define Repository Class**
 
 ```typescript
-// db/users.ts
-export function createUserRepo(ctx: PluginContext) {
-  const table = `${ctx.dbPrefix}users`;
+// db/repository.ts
+import { BaseRepository } from "../../../src/core/repository";
+import type { PluginContext } from "@types";
+import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import type { CoreUtilsAPI } from "../../core-utils/plugin";
+import { sql } from "drizzle-orm";
 
-  return {
-    find(userId: string) {
-      return ctx.db.get<User>(sql.raw(`SELECT * FROM ${table} WHERE user_id = '${userId}'`));
-    },
-
-    create(userId: string) {
-      ctx.db.run(sql.raw(`INSERT INTO ${table} (user_id) VALUES ('${userId}')`));
-    },
-
-    update(userId: string, data: Partial<User>) {
-      const sets = Object.entries(data)
-        .map(([k, v]) => `${k} = '${v}'`)
-        .join(", ");
-      ctx.db.run(sql.raw(`UPDATE ${table} SET ${sets} WHERE user_id = '${userId}'`));
-    },
-
-    delete(userId: string) {
-      ctx.db.run(sql.raw(`DELETE FROM ${table} WHERE user_id = '${userId}'`));
-    },
-  };
+export interface User {
+  id: number;
+  discord_id: string;
+  balance: number;
+  created_at: string;
 }
 
-// Usage in plugin
-const users = createUserRepo(ctx);
-const user = users.find(interaction.user.id);
+export class UserRepository extends BaseRepository<User> {
+  constructor(db: BunSQLiteDatabase, tableName: string) {
+    super(db, tableName, 'id');
+  }
+
+  findByDiscordId(discordId: string): User | null {
+    return this.query()
+      .where('discord_id', '=', discordId)
+      .first();
+  }
+
+  createUser(discordId: string, initialBalance: number = 0): number {
+    // Parameterized query - safe from SQL injection
+    const query = sql`INSERT INTO ${sql.raw(this.tableName)} (discord_id, balance) VALUES (${discordId}, ${initialBalance})`;
+    this.db.run(query);
+    const result = this.db.get<{ id: number }>(sql.raw('SELECT last_insert_rowid() as id'));
+    return result?.id ?? 0;
+  }
+
+  getTopUsers(limit: number = 10): User[] {
+    return this.query()
+      .orderBy('balance', 'DESC')
+      .limit(limit)
+      .all();
+  }
+}
 ```
 
-### Upsert Pattern
+**Step 2: Create Factory Function**
 
 ```typescript
-ctx.db.run(sql.raw(`
-  INSERT INTO ${table} (user_id, balance)
-  VALUES ('${userId}', ${amount})
-  ON CONFLICT(user_id) DO UPDATE SET balance = balance + ${amount}
-`));
+export function createUserRepo(ctx: PluginContext, api: CoreUtilsAPI): UserRepository {
+  return api.database.createRepository(ctx, 'users', UserRepository) as UserRepository;
+}
+
+export async function initDatabase(ctx: PluginContext): Promise<void> {
+  const table = `${ctx.dbPrefix}users`;
+  ctx.db.run(sql.raw(`
+    CREATE TABLE IF NOT EXISTS ${table} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      discord_id TEXT NOT NULL UNIQUE,
+      balance INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `));
+}
 ```
 
-### Transaction-like Pattern
-
-SQLite doesn't need explicit transactions for single statements, but for multiple:
+**Step 3: Use in Plugin**
 
 ```typescript
-ctx.db.run(sql.raw(`BEGIN TRANSACTION`));
+// plugin.ts
+import { initDatabase, createUserRepo } from "./db/repository";
+
+async onLoad(ctx) {
+  const api = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils").api;
+
+  await initDatabase(ctx);
+  const userRepo = createUserRepo(ctx, api);
+
+  ctx.registerCommand({
+    data: new SlashCommandBuilder()
+      .setName("balance")
+      .setDescription("Check your balance"),
+
+    async execute(interaction) {
+      let user = userRepo.findByDiscordId(interaction.user.id);
+      if (!user) {
+        const id = userRepo.createUser(interaction.user.id, 100);
+        user = userRepo.find(id)!;
+      }
+      await interaction.reply(`Your balance: ${user.balance} coins`);
+    },
+  });
+}
+```
+
+### Query Builder Usage
+
+The query builder provides method chaining for safe SQL queries:
+
+```typescript
+// Basic queries
+const user = userRepo.query()
+  .where('discord_id', '=', userId)
+  .first();
+
+// Multiple conditions (AND)
+const activeUsers = userRepo.query()
+  .where('balance', '>', 0)
+  .where('created_at', '>', '2025-01-01')
+  .all();
+
+// OR conditions
+const users = userRepo.query()
+  .where('balance', '>', 1000)
+  .whereOr('level', '>', 50)
+  .all();
+
+// Ordering and limiting
+const topUsers = userRepo.query()
+  .orderBy('balance', 'DESC')
+  .limit(10)
+  .all();
+
+// Updates
+userRepo.query()
+  .where('discord_id', '=', userId)
+  .update({ balance: 500 })
+  .execute();
+
+// Deletes
+userRepo.query()
+  .where('balance', '<', 0)
+  .delete()
+  .execute();
+
+// Counting
+const count = userRepo.query()
+  .where('balance', '>', 0)
+  .count();
+```
+
+**Supported Operators:** `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `IN`, `NOT IN`, `IS`, `IS NOT`
+
+### Base Repository Methods
+
+All repositories have these built-in methods:
+
+```typescript
+// Find by primary key
+const user = userRepo.find(userId);
+
+// Create new record
+const id = userRepo.create({ discord_id: '123', balance: 100 });
+
+// Update existing record
+const success = userRepo.update(userId, { balance: 200 });
+
+// Delete record
+const deleted = userRepo.delete(userId);
+
+// Get all records
+const allUsers = userRepo.all();
+
+// Get query builder
+const query = userRepo.query();
+```
+
+### SQL Injection Prevention
+
+**✅ SAFE - Parameterized queries:**
+```typescript
+// Query builder (always safe)
+userRepo.query().where('discord_id', '=', userId).first();
+
+// Direct parameterized query
+const query = sql`SELECT * FROM ${sql.raw(table)} WHERE discord_id = ${userId}`;
+ctx.db.get<User>(query);
+```
+
+**❌ UNSAFE - String interpolation (NEVER DO THIS):**
+```typescript
+// SQL injection vulnerability!
+ctx.db.get(sql.raw(`SELECT * FROM ${table} WHERE discord_id = '${userId}'`));
+```
+
+The query builder uses Drizzle's `sql` template tag for automatic parameter binding.
+
+### Common Patterns
+
+**Upsert:**
+```typescript
+// INSERT OR IGNORE
+const query = sql`INSERT OR IGNORE INTO ${sql.raw(this.tableName)} (discord_id, balance) VALUES (${discordId}, ${balance})`;
+this.db.run(query);
+
+// INSERT OR REPLACE
+const query = sql`INSERT OR REPLACE INTO ${sql.raw(this.tableName)} (discord_id, balance) VALUES (${discordId}, ${balance})`;
+this.db.run(query);
+```
+
+**Transactions:**
+```typescript
+ctx.db.run(sql.raw('BEGIN TRANSACTION'));
 try {
-  ctx.db.run(sql.raw(`UPDATE ${table1} SET ...`));
-  ctx.db.run(sql.raw(`UPDATE ${table2} SET ...`));
-  ctx.db.run(sql.raw(`COMMIT`));
+  userRepo.update(userId1, { balance: balance1 - amount });
+  userRepo.update(userId2, { balance: balance2 + amount });
+  ctx.db.run(sql.raw('COMMIT'));
 } catch (error) {
-  ctx.db.run(sql.raw(`ROLLBACK`));
+  ctx.db.run(sql.raw('ROLLBACK'));
   throw error;
 }
+```
+
+**Pagination:**
+```typescript
+const page = 0;
+const pageSize = 10;
+
+const users = userRepo.query()
+  .orderBy('balance', 'DESC')
+  .limit(pageSize)
+  .offset(page * pageSize)
+  .all();
+```
+
+### Drizzle's sql API Reference
+
+**Critical for security:**
+- `sql.raw(string)` - For table/column names (unsafe for user input)
+- `sql`template ${value}` ` - For parameterized values (safe)
+- `sql.join()` - For arrays in IN clauses
+
+**Example:**
+```typescript
+// CORRECT - Parameterized query
+const query = sql`SELECT * FROM ${sql.raw(tableName)} WHERE id = ${userId}`;
+
+// WRONG - SQL injection vulnerable
+const query = sql.raw(`SELECT * FROM ${tableName} WHERE id = '${userId}'`);
 ```
 
 ---

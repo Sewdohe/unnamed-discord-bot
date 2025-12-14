@@ -1,6 +1,9 @@
-import { sql } from "drizzle-orm";
+import { BaseRepository } from "../../../src/core/repository";
 import type { PluginContext } from "@types";
+import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import type { CoreUtilsAPI } from "../../core-utils/plugin";
 import type { User } from "discord.js";
+import { sql } from "drizzle-orm";
 
 // ============ Types ============
 
@@ -17,6 +20,70 @@ export interface ModCase {
 }
 
 export type CaseType = "kick" | "ban" | "unban" | "timeout" | "warn" | "purge" | "lock" | "unlock" | "automod_filter" | "automod_invite";
+
+// ============ Repository ============
+
+export class ModerationRepository extends BaseRepository<ModCase> {
+  constructor(db: BunSQLiteDatabase, tableName: string) {
+    super(db, tableName, 'id');
+  }
+
+  /**
+   * Create a new moderation case
+   */
+  createCase(
+    type: CaseType,
+    userId: string,
+    userTag: string,
+    moderatorId: string,
+    moderatorTag: string,
+    reason: string,
+    duration: number | null = null
+  ): number {
+    const query = sql`INSERT INTO ${sql.raw(this.tableName)} (type, user_id, user_tag, moderator_id, moderator_tag, reason, duration) VALUES (${type}, ${userId}, ${userTag}, ${moderatorId}, ${moderatorTag}, ${reason}, ${duration})`;
+    this.db.run(query);
+
+    const result = this.db.get<{ id: number }>(sql.raw('SELECT last_insert_rowid() as id'));
+    return result?.id ?? 0;
+  }
+
+  /**
+   * Get a case by ID
+   */
+  getCase(caseId: number): ModCase | null {
+    return this.find(caseId);
+  }
+
+  /**
+   * Get all cases for a user
+   */
+  getUserCases(userId: string): ModCase[] {
+    return this.query()
+      .where('user_id', '=', userId)
+      .orderBy('created_at', 'DESC')
+      .all();
+  }
+
+  /**
+   * Update the reason for a case
+   */
+  updateCaseReason(caseId: number, newReason: string): boolean {
+    return this.update(caseId, { reason: newReason });
+  }
+}
+
+// ============ Factory Function ============
+
+/**
+ * Create a moderation repository
+ */
+export function createModerationRepo(
+  ctx: PluginContext,
+  api: CoreUtilsAPI
+): ModerationRepository {
+  const tableName = `${ctx.dbPrefix}cases`;
+  return new ModerationRepository(ctx.db, tableName);
+}
 
 // ============ Database Initialization ============
 
@@ -38,67 +105,4 @@ export async function initDatabase(ctx: PluginContext): Promise<void> {
   `));
 
   ctx.logger.debug(`Initialized table: ${table}`);
-}
-
-// ============ Repository Functions ============
-
-export function createCase(
-  ctx: PluginContext,
-  type: CaseType,
-  user: User,
-  moderator: User,
-  reason: string,
-  duration: number | null = null
-): number {
-  const table = `${ctx.dbPrefix}cases`;
-
-  ctx.db.run(sql.raw(`
-    INSERT INTO ${table} (type, user_id, user_tag, moderator_id, moderator_tag, reason, duration)
-    VALUES (
-      '${type}',
-      '${user.id}',
-      '${user.tag.replace(/'/g, "''")}',
-      '${moderator.id}',
-      '${moderator.tag.replace(/'/g, "''")}',
-      '${reason.replace(/'/g, "''")}',
-      ${duration}
-    )
-  `));
-
-  const result = ctx.db.get<{ id: number }>(
-    sql.raw(`SELECT last_insert_rowid() as id`)
-  );
-
-  return result?.id ?? 0;
-}
-
-export function getCase(ctx: PluginContext, caseId: number): ModCase | null {
-  const table = `${ctx.dbPrefix}cases`;
-
-  return ctx.db.get<ModCase>(
-    sql.raw(`SELECT * FROM ${table} WHERE id = ${caseId}`)
-  ) ?? null;
-}
-
-export function getUserCases(ctx: PluginContext, userId: string): ModCase[] {
-  const table = `${ctx.dbPrefix}cases`;
-
-  return ctx.db.all<ModCase>(
-    sql.raw(`SELECT * FROM ${table} WHERE user_id = '${userId}' ORDER BY created_at DESC`)
-  ) ?? [];
-}
-
-export function updateCaseReason(ctx: PluginContext, caseId: number, newReason: string): boolean {
-  const table = `${ctx.dbPrefix}cases`;
-
-  const existingCase = getCase(ctx, caseId);
-  if (!existingCase) return false;
-
-  ctx.db.run(sql.raw(`
-    UPDATE ${table}
-    SET reason = '${newReason.replace(/'/g, "''")}'
-    WHERE id = ${caseId}
-  `));
-
-  return true;
 }

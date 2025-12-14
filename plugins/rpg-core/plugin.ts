@@ -2,7 +2,7 @@ import { EmbedBuilder, MessageFlags, SlashCommandBuilder, ButtonStyle, ChatInput
 import type { Plugin, PluginContext, Event } from "@types";
 import { z } from "zod";
 import { CoreUtilsAPI } from "plugins/core-utils/plugin";
-import { initDatabase, createUser, getUserProfiles, updatePlayerProfile } from "./db/repository";
+import { initDatabase, createRPGRepo } from "./db/repository";
 
 // Define the configuration schema using Zod
 const configSchema = z.object({
@@ -42,14 +42,19 @@ const plugin: Plugin<typeof configSchema> = {
     },
 
     async onLoad(ctx: PluginContext<RpgConfig>) {
-        // Initialize database
-        await initDatabase(ctx);
+        // Get core-utils
         const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
         if (!coreUtils?.api) {
             ctx.logger.error("core-utils is required but missing - aborting rpg-core load");
             throw new Error("core-utils plugin required");
         }
         const api = coreUtils.api;
+
+        // Initialize database
+        await initDatabase(ctx);
+
+        // Create repository
+        const rpgRepo = createRPGRepo(ctx, api);
 
         // Define UI group for class selection (message scoped)
         api.components.define(ctx, {
@@ -65,11 +70,11 @@ const plugin: Plugin<typeof configSchema> = {
                 ctx.logger.info(`User ${interaction.user.username} selected class: ${meta.componentId}`);
                 const classKey = meta.componentId;
                 try {
-                    const profiles = getUserProfiles(pluginCtx, interaction.user.id);
+                    const profiles = rpgRepo.getProfilesByDiscordId(interaction.user.id);
                     const rpgClass = classKey.charAt(0).toUpperCase() + classKey.slice(1).toLowerCase();
                     if (!profiles || profiles.length === 0) {
                         // Create minimal profile (id will be auto-assigned by DB)
-                        await createUser(pluginCtx, {
+                        rpgRepo.createProfile({
                             discord_id: interaction.user.id,
                             name: interaction.user.username,
                             level: 1,
@@ -82,7 +87,7 @@ const plugin: Plugin<typeof configSchema> = {
                             vitality: 1,
                         });
                     } else {
-                        await updatePlayerProfile(pluginCtx, profiles[0].id, { rpgClass: rpgClass as any, name: interaction.user.username });
+                        rpgRepo.updateProfile(profiles[0].id, { rpgClass: rpgClass as any, name: interaction.user.username });
                     }
                 } catch (err) {
                     try { pluginCtx.logger.warn("Failed to persist RPG class selection:", err); } catch {}

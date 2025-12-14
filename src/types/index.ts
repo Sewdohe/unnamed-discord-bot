@@ -90,3 +90,57 @@ export interface LoadedPlugin {
   commands: Command[];
   events: Event[];
 }
+
+// ============ Database Abstraction ============
+
+export type WhereOperator = '=' | '!=' | '>' | '<' | '>=' | '<=' | 'LIKE' | 'IN' | 'NOT IN' | 'IS' | 'IS NOT';
+
+export interface WhereCondition {
+  field: string;
+  operator: WhereOperator;
+  value: unknown;
+  conjunction?: 'AND' | 'OR';
+}
+
+export interface QueryBuilder<T = unknown> {
+  // Filtering
+  where(field: string, operator: WhereOperator, value: unknown): this;
+  whereAnd(field: string, operator: WhereOperator, value: unknown): this;
+  whereOr(field: string, operator: WhereOperator, value: unknown): this;
+
+  // Ordering & Limiting
+  orderBy(field: string, direction?: 'ASC' | 'DESC'): this;
+  limit(count: number): this;
+  offset(count: number): this;
+
+  // Execution
+  first(): T | null;
+  all(): T[];
+  count(): number;
+
+  // Mutations
+  insert(data: Partial<T>): this;
+  update(data: Partial<T>): this;
+  delete(): this;
+  execute(): void;
+}
+
+export interface Repository<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
+  find(id: number | string): T | null;
+  findBy(field: string, value: unknown): T | null;
+  findAll(): T[];
+  findAllBy(field: string, value: unknown): T[];
+
+  create(data: TCreate): number;
+  update(id: number | string, data: TUpdate): boolean;
+  delete(id: number | string): boolean;
+
+  exists(id: number | string): boolean;
+  count(): number;
+  query(): QueryBuilder<T>;
+}
+
+export interface SchemaValidator<T> {
+  validate(data: unknown): T;
+  partial(data: unknown): Partial<T>;
+}
