@@ -1,15 +1,15 @@
 import { sql } from "drizzle-orm";
 import type { PluginContext } from "@types";
-import type { User } from "discord.js";
 
 // ============ Types ============
 
 export interface PlayerProfile {
     id: number;
+    name: string;
     level: number;
     health: number;
     experience: number;
-    class: RPGClass;
+    rpgClass: RPGClass;
     strength: number;
     agility: number;
     intelligence: number;
@@ -28,10 +28,11 @@ export async function initDatabase(ctx: PluginContext): Promise<void> {
     ctx.db.run(sql.raw(`
     CREATE TABLE IF NOT EXISTS ${table} (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
       level INTEGER NOT NULL DEFAULT 1,
       health INTEGER NOT NULL DEFAULT 100,
       experience INTEGER NOT NULL DEFAULT 0,
-      class TEXT NOT NULL,
+      rpgClass TEXT NOT NULL,
       strength INTEGER NOT NULL DEFAULT 1,
       agility INTEGER NOT NULL DEFAULT 1,
       intelligence INTEGER NOT NULL DEFAULT 1,
@@ -53,13 +54,14 @@ export function createUser(
     const table = `${ctx.dbPrefix}cases`;
 
     ctx.db.run(sql.raw(`
-    INSERT INTO ${table} (id, level, health, experience, class, strength, agility, intelligence, vitality)
+    INSERT INTO ${table} (id, name, level, health, experience, rpgClass, strength, agility, intelligence, vitality)
     VALUES (
         ${userData.id},
+        '${userData.name}',
         ${userData.level},
         ${userData.health},
         ${userData.experience},
-        '${userData.class}',
+        ${userData.rpgClass},
         ${userData.strength},
         ${userData.agility},
         ${userData.intelligence},
@@ -74,7 +76,7 @@ export function createUser(
     return result?.id ?? 0;
 }
 
-export function getUser(ctx: PluginContext, userId: number): PlayerProfile | null {
+export function getUserProfile(ctx: PluginContext, userId: number): PlayerProfile | null {
     const table = `${ctx.dbPrefix}cases`;
 
     return ctx.db.get<PlayerProfile>(
@@ -82,7 +84,7 @@ export function getUser(ctx: PluginContext, userId: number): PlayerProfile | nul
     ) ?? null;
 }
 
-export function getUserCases(ctx: PluginContext, userId: string): PlayerProfile[] {
+export function getUserProfiles(ctx: PluginContext, userId: string): PlayerProfile[] {
     const table = `${ctx.dbPrefix}cases`;
 
     return ctx.db.all<PlayerProfile>(
@@ -93,16 +95,17 @@ export function getUserCases(ctx: PluginContext, userId: string): PlayerProfile[
 export function updatePlayerProfile(ctx: PluginContext, userId: number, newProfile: Partial<PlayerProfile>): boolean {
     const table = `${ctx.dbPrefix}rpg_profiles`;
 
-    const oldProfileData = getUser(ctx, userId);
+    const oldProfileData = getUserProfile(ctx, userId);
     if (!oldProfileData) return false;
 
     ctx.db.run(sql.raw(`
     UPDATE ${table}
     SET
+      name = '${newProfile.name ?? oldProfileData.name}',
       level = ${newProfile.level ?? oldProfileData.level},
       health = ${newProfile.health ?? oldProfileData.health},
       experience = ${newProfile.experience ?? oldProfileData.experience},
-      class = '${newProfile.class ?? oldProfileData.class}',
+      rpgClass = '${newProfile.rpgClass ?? oldProfileData.rpgClass}',
       strength = ${newProfile.strength ?? oldProfileData.strength},
       agility = ${newProfile.agility ?? oldProfileData.agility},
       intelligence = ${newProfile.intelligence ?? oldProfileData.intelligence},

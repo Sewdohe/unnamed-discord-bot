@@ -3,6 +3,11 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  UserSelectMenuBuilder,
+  RoleSelectMenuBuilder,
+  MentionableSelectMenuBuilder,
   PermissionFlagsBits,
   PermissionsBitField,
   GuildMember,
@@ -11,6 +16,9 @@ import {
   ComponentType,
   MessageFlags,
   GuildBasedChannel,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } from "discord.js";
 import { z } from "zod";
 import type { Plugin, PluginContext } from "@types";
@@ -49,6 +57,7 @@ export interface CoreUtilsAPI {
   permissions: PermissionHelpers;
   embeds: EmbedHelpers;
   paginate: PaginateFunction;
+  components: ComponentsHelpers;
   confirm: ConfirmFunction;
 }
 
@@ -101,9 +110,75 @@ type ConfirmFunction = (
   options: string | ConfirmOptions
 ) => Promise<boolean>;
 
+// ============ Component Helpers Types ============
+
+type ButtonDescriptor = {
+  customId?: string;
+  label?: string;
+  style?: ButtonStyle;
+  disabled?: boolean;
+  emoji?: string | { id?: string; name?: string; animated?: boolean } | undefined;
+  url?: string; // link button support: if present, ButtonStyle.Link will be used
+};
+
+type StringSelectOptionDescriptor = {
+  label: string;
+  value: string;
+  description?: string;
+  emoji?: string | { id?: string; name?: string; animated?: boolean } | undefined;
+  default?: boolean;
+};
+
+type StringSelectMenuDescriptor = {
+  customId?: string;
+  placeholder?: string;
+  minValues?: number;
+  maxValues?: number;
+  options: StringSelectOptionDescriptor[];
+  disabled?: boolean;
+};
+
+type GenericSelectMenuDescriptor = {
+  customId?: string;
+  placeholder?: string;
+  minValues?: number;
+  maxValues?: number;
+  disabled?: boolean;
+};
+
+interface ComponentsHelpers {
+  actionRow(buttons: Array<ButtonBuilder | ButtonDescriptor | StringSelectMenuBuilder | StringSelectMenuDescriptor>): ActionRowBuilder<any>;
+  button(descriptor: ButtonDescriptor): ButtonBuilder;
+  selectMenu(descriptor: StringSelectMenuDescriptor): StringSelectMenuBuilder;
+  userSelect(descriptor: GenericSelectMenuDescriptor): UserSelectMenuBuilder;
+  roleSelect(descriptor: GenericSelectMenuDescriptor): RoleSelectMenuBuilder;
+  mentionableSelect(descriptor: GenericSelectMenuDescriptor): MentionableSelectMenuBuilder;
+  // Modal helpers:
+  textInput(descriptor: TextInputDescriptor): TextInputBuilder;
+  modal(descriptor: ModalDescriptor): ModalBuilder;
+}
+
+type TextInputDescriptor = {
+  customId: string;
+  label: string;
+  style?: TextInputStyle | string | number;
+  required?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  placeholder?: string;
+  value?: string;
+  disabled?: boolean;
+};
+
+type ModalDescriptor = {
+  customId: string;
+  title: string;
+  components: TextInputDescriptor[];
+};
+
 // ============ Plugin Definition ============
 
-const plugin: Plugin<typeof configSchema> = {
+const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
   manifest: {
     name: "core-utils",
     version: "1.0.0",
@@ -143,6 +218,7 @@ const plugin: Plugin<typeof configSchema> = {
       permissions: createPermissionHelpers(),
       embeds: createEmbedHelpers(ctx),
       paginate: createPaginateFunction(ctx),
+      components: createComponentsHelpers(),
       confirm: createConfirmFunction(ctx),
     };
 
@@ -454,6 +530,178 @@ function createConfirmFunction(ctx: PluginContext<CoreUtilsConfig>): ConfirmFunc
       return false;
     }
   };
+}
+
+// ============ Component Helpers Implementation ============
+
+/**
+ * Create helpers for building discord.js components (buttons & action rows).
+ * Developers can pass ButtonBuilder instances or simple descriptors.
+ */
+function createComponentsHelpers(): ComponentsHelpers {
+  return {
+    button(descriptor) {
+      const b = new ButtonBuilder();
+      if (descriptor.customId) b.setCustomId(descriptor.customId);
+      if (descriptor.label) b.setLabel(descriptor.label);
+      if (descriptor.style !== undefined) b.setStyle(normalizeButtonStyle(descriptor.style));
+      if (typeof descriptor.disabled === "boolean") b.setDisabled(descriptor.disabled);
+      if (descriptor.emoji) b.setEmoji(descriptor.emoji as any);
+      if (descriptor.url) {
+        b.setStyle(ButtonStyle.Link);
+        // ButtonBuilder#setURL is not defined on ButtonBuilder in types? use setURL method if available.
+        // TypeScript types in discord.js v14 uses setURL on ButtonBuilder only for Link style.
+        try {
+          // @ts-ignore - setURL exists at runtime for link buttons
+          b.setURL(descriptor.url);
+        } catch (e) {
+          // ignore if not supported in runtime environment or types
+        }
+      }
+      return b;
+    },
+
+    selectMenu(descriptor) {
+      const menu = new StringSelectMenuBuilder();
+      if (descriptor.customId) menu.setCustomId(descriptor.customId);
+      if (descriptor.placeholder) menu.setPlaceholder(descriptor.placeholder);
+      if (descriptor.minValues !== undefined) menu.setMinValues(descriptor.minValues);
+      if (descriptor.maxValues !== undefined) menu.setMaxValues(descriptor.maxValues);
+      if (descriptor.disabled !== undefined) menu.setDisabled(descriptor.disabled);
+      menu.addOptions(
+        ...descriptor.options.map(opt => {
+          const o = new StringSelectMenuOptionBuilder()
+            .setLabel(opt.label)
+            .setValue(opt.value)
+            .setDefault(Boolean(opt.default));
+          if (opt.description) o.setDescription(opt.description);
+          if (opt.emoji) o.setEmoji(opt.emoji as any);
+          return o;
+        })
+      );
+      return menu;
+    },
+
+    userSelect(descriptor) {
+      const menu = new UserSelectMenuBuilder();
+      if (descriptor.customId) menu.setCustomId(descriptor.customId);
+      if (descriptor.placeholder) menu.setPlaceholder(descriptor.placeholder);
+      if (descriptor.minValues !== undefined) menu.setMinValues(descriptor.minValues);
+      if (descriptor.maxValues !== undefined) menu.setMaxValues(descriptor.maxValues);
+      if (descriptor.disabled !== undefined) menu.setDisabled(descriptor.disabled);
+      return menu;
+    },
+
+    roleSelect(descriptor) {
+      const menu = new RoleSelectMenuBuilder();
+      if (descriptor.customId) menu.setCustomId(descriptor.customId);
+      if (descriptor.placeholder) menu.setPlaceholder(descriptor.placeholder);
+      if (descriptor.minValues !== undefined) menu.setMinValues(descriptor.minValues);
+      if (descriptor.maxValues !== undefined) menu.setMaxValues(descriptor.maxValues);
+      if (descriptor.disabled !== undefined) menu.setDisabled(descriptor.disabled);
+      return menu;
+    },
+
+    mentionableSelect(descriptor) {
+      const menu = new MentionableSelectMenuBuilder();
+      if (descriptor.customId) menu.setCustomId(descriptor.customId);
+      if (descriptor.placeholder) menu.setPlaceholder(descriptor.placeholder);
+      if (descriptor.minValues !== undefined) menu.setMinValues(descriptor.minValues);
+      if (descriptor.maxValues !== undefined) menu.setMaxValues(descriptor.maxValues);
+      if (descriptor.disabled !== undefined) menu.setDisabled(descriptor.disabled);
+      return menu;
+    },
+
+    textInput(descriptor) {
+      const input = new TextInputBuilder();
+      input.setCustomId(descriptor.customId);
+      input.setLabel(descriptor.label);
+      if (descriptor.placeholder) input.setPlaceholder(descriptor.placeholder);
+      if (descriptor.minLength !== undefined) input.setMinLength(descriptor.minLength);
+      if (descriptor.maxLength !== undefined) input.setMaxLength(descriptor.maxLength);
+      if (descriptor.required !== undefined) input.setRequired(descriptor.required);
+      if (descriptor.value) input.setValue(descriptor.value);
+      // Text inputs can't be disabled; ignore this property if provided
+      // Normalize style
+      if (descriptor.style !== undefined) {
+        const style = normalizeTextInputStyle(descriptor.style);
+        input.setStyle(style);
+      }
+      return input;
+    },
+
+    modal(descriptor) {
+      const m = new ModalBuilder().setCustomId(descriptor.customId).setTitle(descriptor.title);
+      const rows = descriptor.components.map(c => new ActionRowBuilder<TextInputBuilder>().addComponents(this.textInput(c)));
+      m.addComponents(...rows);
+      return m;
+    },
+
+    actionRow(buttons) {
+      const row = new ActionRowBuilder<any>();
+      buttons.forEach(btn => {
+        // ButtonBuilder or StringSelectMenuBuilder
+        if (btn instanceof ButtonBuilder || btn instanceof StringSelectMenuBuilder) {
+          row.addComponents(btn);
+          return;
+        }
+        // If it's a descriptor, detect whether it's a ButtonDescriptor or SelectDescriptor
+        if ((btn as any).options) {
+          row.addComponents(this.selectMenu(btn as StringSelectMenuDescriptor));
+          return;
+        }
+        row.addComponents(this.button(btn as ButtonDescriptor));
+      });
+      return row;
+    },
+  };
+}
+
+function normalizeButtonStyle(style?: string | number | ButtonStyle): ButtonStyle {
+  if (style === undefined || style === null) return ButtonStyle.Primary;
+  if (typeof style === "number") return style as ButtonStyle;
+  if (typeof style === "string") {
+    const s = style.toLowerCase();
+    switch (s) {
+      case "primary":
+        return ButtonStyle.Primary;
+      case "secondary":
+        return ButtonStyle.Secondary;
+      case "success":
+        return ButtonStyle.Success;
+      case "danger":
+        return ButtonStyle.Danger;
+      case "link":
+        return ButtonStyle.Link;
+      default:
+        // Try number fallback
+        const asNumber = Number(s);
+        if (!isNaN(asNumber)) return asNumber as ButtonStyle;
+        return ButtonStyle.Primary;
+    }
+  }
+  return style as ButtonStyle;
+}
+
+function normalizeTextInputStyle(style?: string | number | TextInputStyle): TextInputStyle {
+  if (style === undefined || style === null) return TextInputStyle.Short;
+  if (typeof style === "number") return style as TextInputStyle;
+  if (typeof style === "string") {
+    const s = style.toLowerCase();
+    switch (s) {
+      case "short":
+      case "short":
+        return TextInputStyle.Short;
+      case "paragraph":
+      case "paragraph":
+        return TextInputStyle.Paragraph;
+      default:
+        const asNumber = Number(s);
+        if (!isNaN(asNumber)) return asNumber as TextInputStyle;
+        return TextInputStyle.Short;
+    }
+  }
+  return style as TextInputStyle;
 }
 
 // ============ Export ============

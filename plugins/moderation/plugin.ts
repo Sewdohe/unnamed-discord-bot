@@ -67,7 +67,7 @@ const plugin: Plugin<typeof configSchema> = {
       description: "Moderation commands",
     },
     dependencies: {
-      soft: ["core-utils"],
+      hard: ["core-utils"],
     },
   },
 

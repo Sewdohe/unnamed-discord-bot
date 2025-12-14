@@ -37,9 +37,7 @@ type VerificationConfig = {
   };
 };
 
-// ============ Main Verify Command ============
-
-export function verifyCommand(ctx: PluginContext<VerificationConfig>, api?: CoreUtilsAPI): Command {
+export function verifyCommand(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("verify")
@@ -101,11 +99,11 @@ export function verifyCommand(ctx: PluginContext<VerificationConfig>, api?: Core
 
 // ============ Handler: Panel ============
 
-async function handlePanel(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI | undefined, interaction: ChatInputCommandInteraction) {
+async function handlePanel(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI, interaction: ChatInputCommandInteraction) {
   const targetChannel = (interaction.options.getChannel("channel") as TextChannel) || interaction.channel as TextChannel;
 
   if (!targetChannel || !targetChannel.isTextBased()) {
-    const embed = api?.embeds.error(
+    const embed = api.embeds.error(
       "Invalid channel! Please select a text channel.",
       "Error"
     ) ?? new EmbedBuilder()
@@ -123,14 +121,23 @@ async function handlePanel(ctx: PluginContext<VerificationConfig>, api: CoreUtil
     .setColor(ctx.config.verificationPanel.color)
     .setTimestamp();
 
-  // Create verification button
-  const verifyButton = new ButtonBuilder()
-    .setCustomId("verification:verify")
-    .setLabel(ctx.config.verificationPanel.buttonLabel)
-    .setStyle(ButtonStyle.Success)
-    .setEmoji("✅");
+  // Create verification button (use core-utils helper if available)
+  const verifyButton = api.components.button
+    ? api.components.button({
+        customId: "verification:verify",
+        label: ctx.config.verificationPanel.buttonLabel,
+        style: ButtonStyle.Success,
+        emoji: "✅",
+      })
+    : new ButtonBuilder()
+        .setCustomId("verification:verify")
+        .setLabel(ctx.config.verificationPanel.buttonLabel)
+        .setStyle(ButtonStyle.Success)
+        .setEmoji("✅");
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(verifyButton);
+  const row = api.components.actionRow
+    ? api.components.actionRow([verifyButton])
+    : new ActionRowBuilder<ButtonBuilder>().addComponents(verifyButton);
 
   // Send panel
   try {
@@ -139,7 +146,7 @@ async function handlePanel(ctx: PluginContext<VerificationConfig>, api: CoreUtil
       components: [row],
     });
 
-    const successEmbed = api?.embeds.success(
+    const successEmbed = api.embeds.success(
       `Verification panel sent to ${targetChannel}!`,
       "Panel Sent"
     ) ?? new EmbedBuilder()
@@ -150,7 +157,7 @@ async function handlePanel(ctx: PluginContext<VerificationConfig>, api: CoreUtil
   } catch (error) {
     ctx.logger.error("Failed to send verification panel:", error);
 
-    const errorEmbed = api?.embeds.error(
+    const errorEmbed = api.embeds.error(
       "Failed to send verification panel. Make sure I have permission to send messages in that channel!",
       "Error"
     ) ?? new EmbedBuilder()
@@ -163,12 +170,12 @@ async function handlePanel(ctx: PluginContext<VerificationConfig>, api: CoreUtil
 
 // ============ Handler: Verify User ============
 
-async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI | undefined, interaction: ChatInputCommandInteraction) {
+async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI, interaction: ChatInputCommandInteraction) {
   const user = interaction.options.getUser("user", true);
   const member = await interaction.guild?.members.fetch(user.id);
 
   if (!member) {
-    const embed = api?.embeds.error(
+    const embed = api.embeds.error(
       "User not found in this server!",
       "Error"
     ) ?? new EmbedBuilder()
@@ -183,7 +190,7 @@ async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: Cor
 
   // Check if already verified
   if (repo.isVerified(user.id, interaction.guildId!)) {
-    const embed = api?.embeds.warning(
+    const embed = api.embeds.warning(
       `${user} is already verified!`,
       "Already Verified"
     ) ?? new EmbedBuilder()
@@ -209,7 +216,7 @@ async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: Cor
       await member.roles.remove(ctx.config.unverifiedRoleId);
     }
 
-    const embed = api?.embeds.success(
+    const embed = api.embeds.success(
       `Successfully verified ${user}!`,
       "User Verified"
     ) ?? new EmbedBuilder()
@@ -222,7 +229,7 @@ async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: Cor
     if (ctx.config.logChannelId) {
       const logChannel = await interaction.guild?.channels.fetch(ctx.config.logChannelId) as TextChannel;
       if (logChannel?.isTextBased()) {
-        const logEmbed = api?.embeds.info(
+        const logEmbed = api.embeds.info(
           `**User:** ${user} (${user.id})\n**Verified by:** ${interaction.user}\n**Method:** Manual`,
           "✅ User Verified"
         ) ?? new EmbedBuilder()
@@ -237,7 +244,7 @@ async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: Cor
   } catch (error) {
     ctx.logger.error("Failed to assign roles:", error);
 
-    const embed = api?.embeds.error(
+    const embed = api.embeds.error(
       "Failed to assign roles! Make sure I have the Manage Roles permission and my role is above the verification roles.",
       "Error"
     ) ?? new EmbedBuilder()
@@ -250,12 +257,12 @@ async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: Cor
 
 // ============ Handler: Unverify User ============
 
-async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI | undefined, interaction: ChatInputCommandInteraction) {
+async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI, interaction: ChatInputCommandInteraction) {
   const user = interaction.options.getUser("user", true);
   const member = await interaction.guild?.members.fetch(user.id);
 
   if (!member) {
-    const embed = api?.embeds.error(
+    const embed = api.embeds.error(
       "User not found in this server!",
       "Error"
     ) ?? new EmbedBuilder()
@@ -270,7 +277,7 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
 
   // Check if verified
   if (!repo.isVerified(user.id, interaction.guildId!)) {
-    const embed = api?.embeds.warning(
+    const embed = api.embeds.warning(
       `${user} is not verified!`,
       "Not Verified"
     ) ?? new EmbedBuilder()
@@ -293,7 +300,7 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
       await member.roles.add(ctx.config.unverifiedRoleId);
     }
 
-    const embed = api?.embeds.success(
+    const embed = api.embeds.success(
       `Successfully unverified ${user}!`,
       "User Unverified"
     ) ?? new EmbedBuilder()
@@ -306,7 +313,7 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
     if (ctx.config.logChannelId) {
       const logChannel = await interaction.guild?.channels.fetch(ctx.config.logChannelId) as TextChannel;
       if (logChannel?.isTextBased()) {
-        const logEmbed = api?.embeds.warning(
+        const logEmbed = api.embeds.warning(
           `**User:** ${user} (${user.id})\n**Unverified by:** ${interaction.user}`,
           "⚠️ User Unverified"
         ) ?? new EmbedBuilder()
@@ -321,7 +328,7 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
   } catch (error) {
     ctx.logger.error("Failed to remove roles:", error);
 
-    const embed = api?.embeds.error(
+    const embed = api.embeds.error(
       "Failed to remove roles! Make sure I have the Manage Roles permission.",
       "Error"
     ) ?? new EmbedBuilder()
@@ -334,11 +341,11 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
 
 // ============ Handler: Stats ============
 
-async function handleStats(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI | undefined, interaction: ChatInputCommandInteraction) {
+async function handleStats(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI, interaction: ChatInputCommandInteraction) {
   const repo = createVerificationRepo(ctx);
   const stats = repo.getStats(interaction.guildId!);
 
-  const embed = api?.embeds.create()
+  const embed = api.embeds.create()
     .setTitle("📊 Verification Statistics")
     .setColor(0x5865f2)
     .addFields(

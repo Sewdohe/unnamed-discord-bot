@@ -16,7 +16,7 @@ const plugin: Plugin = {
       description: "Core utilities test commands",
     },
     dependencies: {
-      soft: ["core-utils"],
+      hard: ["core-utils"],
     },
   },
 
@@ -24,8 +24,8 @@ const plugin: Plugin = {
     const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
 
     if (!coreUtils?.api) {
-      ctx.logger.warn("core-utils not available, test commands disabled");
-      return;
+      ctx.logger.error("core-utils is required but missing - aborting example plugin load");
+      throw new Error("core-utils plugin required");
     }
 
     const api = coreUtils.api;
@@ -209,7 +209,78 @@ const plugin: Plugin = {
       },
     });
 
+    // Test action row / button helpers
+    ctx.registerCommand({
+      data: new SlashCommandBuilder()
+        .setName("test-action-row")
+        .setDescription("Test action row / button helpers"),
+
+      async execute(interaction) {
+        const row = api.components.actionRow([
+          { customId: "test_confirm", label: "Confirm", style: 3 }, // ButtonStyle.Success
+          { customId: "test_cancel", label: "Cancel", style: 4 }, // ButtonStyle.Danger
+        ]);
+
+        await interaction.reply({ content: "Action row test", components: [row], flags: MessageFlags.Ephemeral });
+      },
+    });
+
+    // Test select menu helpers
+    ctx.registerCommand({
+      data: new SlashCommandBuilder()
+        .setName("test-select-menu")
+        .setDescription("Test select menu helpers"),
+
+      async execute(interaction) {
+        const menu = api.components.selectMenu({
+          customId: "test_select",
+          placeholder: "Choose an item",
+          options: [
+            { label: "A", value: "a", description: "Select A" },
+            { label: "B", value: "b", description: "Select B" },
+            { label: "C", value: "c", description: "Select C" },
+          ],
+        });
+
+        await interaction.reply({ content: "Pick an option", components: [api.components.actionRow([menu])] });
+      },
+    });
+
+    // Test modal helpers
+    ctx.registerCommand({
+      data: new SlashCommandBuilder()
+        .setName("test-modal")
+        .setDescription("Test modal helpers"),
+
+      async execute(interaction) {
+        const modal = api.components.modal({
+          customId: "test_modal",
+          title: "Test Modal",
+          components: [
+            { customId: "name", label: "Your Name", placeholder: "Enter your name" },
+            { customId: "bio", label: "Short Bio", style: "paragraph", placeholder: "A few words about you" },
+          ],
+        });
+
+        // Show modal to user
+        await interaction.showModal(modal);
+      },
+    });
+
     ctx.logger.info("core-utils test commands registered!");
+    // Register an event to handle modal submit
+    ctx.registerEvent({
+      name: "interactionCreate",
+      async execute(ctx, interaction) {
+        if (!interaction.isModalSubmit()) return;
+        if (interaction.customId !== "test_modal") return;
+
+        const name = interaction.fields.getTextInputValue("name");
+        const bio = interaction.fields.getTextInputValue("bio");
+
+        await interaction.reply({ content: `Thanks ${name}! Bio: ${bio}`, flags: MessageFlags.Ephemeral });
+      },
+    });
   },
 };
 

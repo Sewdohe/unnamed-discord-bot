@@ -1,7 +1,8 @@
-import { EmbedBuilder, MessageFlags, SlashCommandBuilder } from "discord.js";
+import { EmbedBuilder, MessageFlags, SlashCommandBuilder, ButtonStyle } from "discord.js";
 import type { Plugin, PluginContext, Command } from "@types";
 import { z } from "zod";
 import { CoreUtilsAPI } from "plugins/core-utils/plugin";
+import { initDatabase, createUser } from "./db/repository";
 
 // Define the configuration schema using Zod
 const configSchema = z.object({
@@ -41,7 +42,14 @@ const plugin: Plugin<typeof configSchema> = {
     },
 
     async onLoad(ctx: PluginContext<RpgConfig>) {
+        // Initialize database
+        await initDatabase(ctx);
         const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
+        if (!coreUtils?.api) {
+            ctx.logger.error("core-utils is required but missing - aborting rpg-core load");
+            throw new Error("core-utils plugin required");
+        }
+        const api = coreUtils.api;
 
         // Head daddy slash command for RPG plugin
         ctx.registerCommand({
@@ -59,12 +67,17 @@ const plugin: Plugin<typeof configSchema> = {
                 switch (subcommand) {
                     case "choose-class":
 
-                        // prefer using the core-utils embed helpers if available
-                        const api = coreUtils?.api;
-                        let rpg_menu_embed = api!.embeds.create().setTitle("Choose Your RPG Class").setDescription("Select a class to start your adventure!");
+                        // Use core-utils embed and components helpers
+                        let rpg_menu_embed = api.embeds.create().setTitle("Choose Your RPG Class").setDescription("Select a class to start your adventure!");
 
-                        // send embed
-                        await interaction.reply({ embeds: [rpg_menu_embed], flags: MessageFlags.Ephemeral });
+                        const row = api.components.actionRow([
+                            { customId: "rpg_choose_warrior", label: "Warrior", style: ButtonStyle.Primary },
+                            { customId: "rpg_choose_mage", label: "Mage", style: ButtonStyle.Primary },
+                            { customId: "rpg_choose_rogue", label: "Rogue", style: ButtonStyle.Primary },
+                        ]);
+
+                        // send embed and action row
+                        await interaction.reply({ embeds: [rpg_menu_embed], components: row ? [row] : [], flags: MessageFlags.Ephemeral });
                         break;
                 }
             },

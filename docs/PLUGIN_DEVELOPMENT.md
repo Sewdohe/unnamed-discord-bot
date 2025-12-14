@@ -221,6 +221,65 @@ Features:
 - Auto-cleanup after timeout
 - Buttons disable when timeout expires
 
+### Component / Button Helpers
+
+Create consistent action rows and buttons using core-utils helpers.
+
+```typescript
+const api = coreUtils.api;
+
+const row = api.components.actionRow([
+  { customId: "confirm", label: "Confirm", style: 3 }, // ButtonStyle.Success
+  { customId: "cancel", label: "Cancel", style: 4 }, // ButtonStyle.Danger
+]);
+
+await interaction.reply({ content: "Confirm action?", components: [row] });
+```
+
+You can pass either `ButtonBuilder` instances or simple descriptors to `actionRow`.
+
+```typescript
+// Select menu example
+const menu = api.components.selectMenu({
+  customId: "select:example",
+  placeholder: "Pick an option",
+  options: [
+    { label: "Option 1", value: "opt1", description: "The first option" },
+    { label: "Option 2", value: "opt2", description: "The second option" },
+  ],
+});
+
+await interaction.reply({ content: "Choose", components: [api.components.actionRow([menu])] });
+```
+
+```typescript
+// Modal example
+const modal = api.components.modal({
+  customId: "report_issue",
+  title: "Report an issue",
+  components: [
+    { customId: "issue_title", label: "Issue Title", style: "short", placeholder: "What's the issue?" },
+    { customId: "issue_details", label: "Details", style: "paragraph", placeholder: "Details about the issue" },
+  ],
+});
+
+await interaction.showModal(modal);
+```
+
+```typescript
+// Link button
+const linkRow = api.components.actionRow([
+  { label: "Open Website", url: "https://example.com", style: "link" },
+]);
+await interaction.reply({ content: "Open link:", components: [linkRow] });
+
+// User / Role / Mentionable select
+const userSelectRow = api.components.actionRow([
+  api.components.userSelect({ customId: "select:user", placeholder: "Choose a user" }),
+]);
+await interaction.reply({ content: "Select a user", components: [userSelectRow] });
+```
+
 **Advanced pagination:**
 
 ```typescript

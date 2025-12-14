@@ -29,7 +29,7 @@ type VerificationConfig = {
 
 // ============ Member Join Handler ============
 
-export function guildMemberAddHandler(ctx: PluginContext<VerificationConfig>, api?: CoreUtilsAPI): Event<"guildMemberAdd"> {
+export function guildMemberAddHandler(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI): Event<"guildMemberAdd"> {
   return {
     name: "guildMemberAdd",
 
@@ -69,7 +69,7 @@ export function guildMemberAddHandler(ctx: PluginContext<VerificationConfig>, ap
               if (ctx.config.logChannelId && ctx.config.logChannelId !== "") {
                 const logChannel = await member.guild.channels.fetch(ctx.config.logChannelId) as TextChannel;
                 if (logChannel?.isTextBased()) {
-                  const embed = api?.embeds.warning(
+                  const embed = api.embeds.warning(
                     `**User:** ${member.user.tag} (${member.id})\n**Reason:** Failed to verify within ${ctx.config.kickUnverified.timeout} minutes`,
                     "⚠️ User Kicked (Unverified)"
                   ) ?? new EmbedBuilder()
@@ -93,7 +93,7 @@ export function guildMemberAddHandler(ctx: PluginContext<VerificationConfig>, ap
 
 // ============ Button Interaction Handler ============
 
-export function interactionCreateHandler(ctx: PluginContext<VerificationConfig>, api?: CoreUtilsAPI): Event<"interactionCreate"> {
+export function interactionCreateHandler(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI): Event<"interactionCreate"> {
   return {
     name: "interactionCreate",
 
@@ -115,13 +115,13 @@ export function interactionCreateHandler(ctx: PluginContext<VerificationConfig>,
 
 // ============ Verify Button Handler ============
 
-async function handleVerifyButton(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI | undefined, interaction: any) {
+async function handleVerifyButton(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI, interaction: any) {
   const member = interaction.member;
   const repo = createVerificationRepo(ctx);
 
   // Check if already verified
   if (repo.isVerified(interaction.user.id, interaction.guildId)) {
-    const embed = api?.embeds.info(
+    const embed = api.embeds.info(
       "You are already verified!",
       "Already Verified"
     ) ?? new EmbedBuilder()
@@ -150,7 +150,7 @@ async function handleVerifyButton(ctx: PluginContext<VerificationConfig>, api: C
     ctx.logger.info(`User verified: ${interaction.user.tag} (${interaction.user.id})`);
 
     // Send success message
-    const successEmbed = api?.embeds.success(
+    const successEmbed = api.embeds.success(
       "You have been verified! Welcome to the server!",
       "✅ Verified"
     ) ?? new EmbedBuilder()
@@ -173,7 +173,7 @@ async function handleVerifyButton(ctx: PluginContext<VerificationConfig>, api: C
             .replace("{username}", interaction.user.username)
             .replace("{server}", interaction.guild.name);
 
-          const welcomeEmbed = api?.embeds.primary(
+          const welcomeEmbed = api.embeds.primary(
             message,
             "Welcome!"
           ) ?? new EmbedBuilder()
@@ -190,7 +190,7 @@ async function handleVerifyButton(ctx: PluginContext<VerificationConfig>, api: C
       const logChannel = await interaction.guild.channels.fetch(ctx.config.logChannelId) as TextChannel;
 
       if (logChannel?.isTextBased()) {
-        const logEmbed = api?.embeds.info(
+        const logEmbed = api.embeds.info(
           `**User:** ${interaction.user} (${interaction.user.id})\n**Method:** Button Click`,
           "✅ User Verified"
         ) ?? new EmbedBuilder()
@@ -205,7 +205,7 @@ async function handleVerifyButton(ctx: PluginContext<VerificationConfig>, api: C
   } catch (error) {
     ctx.logger.error("Failed to verify user:", error);
 
-    const errorEmbed = api?.embeds.error(
+    const errorEmbed = api.embeds.error(
       "Failed to verify you! Please contact an administrator.",
       "Error"
     ) ?? new EmbedBuilder()

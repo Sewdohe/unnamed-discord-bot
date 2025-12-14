@@ -71,7 +71,7 @@ const plugin: Plugin<typeof configSchema> = {
     description: "Server verification system with button-based verification",
     author: "Sewdohe",
     dependencies: {
-      soft: ["core-utils"],
+      hard: ["core-utils"],
     },
   },
 
@@ -105,9 +105,10 @@ const plugin: Plugin<typeof configSchema> = {
     // Get core-utils
     const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
     if (!coreUtils?.api) {
-      ctx.logger.warn("core-utils not available, some features may be limited");
+      ctx.logger.error("core-utils is required and missing - aborting verification plugin load");
+      throw new Error("core-utils plugin required");
     }
-    const api = coreUtils?.api;
+    const api = coreUtils.api;
 
     // Check if enabled
     if (!ctx.config.enabled) {
