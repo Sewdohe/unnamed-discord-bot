@@ -1,7 +1,0 @@
-# RPG Plugin Configuration
-
-greeting: Hello
-maxUses: 10
-features:
-  enableFoo: true
-  enableBar: false
