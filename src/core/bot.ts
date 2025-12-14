@@ -91,7 +91,7 @@ export class Bot {
     }
 
     logger.info(`Registered ${events.length} event handlers`);
-    logger.info(`Sewbot successfully started! It took ${Date.now() - process.uptime() * 1000}ms to start.`);
+    logger.info(`Sewbot successfully started! It took ${Date.now() - this.client.uptime!} seconds to start.`);
   }
 
   private setupInteractionHandler(): void {
