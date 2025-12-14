@@ -13,6 +13,7 @@ import {
   GuildMember,
   ChatInputCommandInteraction,
   ButtonInteraction,
+  MessageComponentInteraction,
   ComponentType,
   MessageFlags,
   GuildBasedChannel,
@@ -161,6 +162,45 @@ interface ComponentsHelpers {
    * Accepts a single ActionRowBuilder or an array and always returns an array.
    */
   disableAll(rows: ActionRowBuilder<any> | ActionRowBuilder<any>[]): ActionRowBuilder<any>[];
+  // Define a UI group (declare components and a handler together). The plugin should pass its PluginContext.
+  define(pluginCtx: PluginContext, descriptor: UIGroupDescriptor): UIRegistration;
+  // Build the ActionRowBuilders for a defined group
+  build(pluginCtx: PluginContext, groupId: string): ActionRowBuilder<any>[];
+  // Send a message using a defined group and attach a per-message collector that dispatches to the group's handler
+  sendWithHandlers(pluginCtx: PluginContext, interaction: ChatInputCommandInteraction, options: SendWithHandlersOptions): Promise<void>;
+  // Unregister a group for a plugin (cleanup)
+  unregister(pluginCtx: PluginContext, groupId: string): boolean;
+}
+
+// DSL types
+type UIScope = "message" | "global";
+
+interface UIGroupDescriptor {
+  id: string; // group id
+  scope?: UIScope; // message by default
+  components: Array<ButtonDescriptor | StringSelectMenuDescriptor | GenericSelectMenuDescriptor>;
+  handler: (ctx: PluginContext, interaction: MessageComponentInteraction, meta: { pluginName: string; groupId: string; componentId: string }) => Promise<void>;
+  filter?: (interaction: MessageComponentInteraction) => boolean;
+  timeout?: number;
+  autoDisable?: boolean;
+}
+
+interface UIRegistration {
+  pluginName: string;
+  groupId: string;
+  descriptor: UIGroupDescriptor;
+  build: () => ActionRowBuilder<any>[];
+}
+
+interface SendWithHandlersOptions {
+  groupId: string;
+  content?: string;
+  embeds?: EmbedBuilder[];
+  flags?: number;
+  ephemeral?: boolean;
+  filter?: (interaction: any) => boolean;
+  timeout?: number;
+  autoDisable?: boolean;
 }
 
 type TextInputDescriptor = {
@@ -182,6 +222,29 @@ type ModalDescriptor = {
 };
 
 // ============ Plugin Definition ============
+// UI registry: maps pluginName -> groupId -> registration
+const uiRegistry: Map<string, Map<string, UIGroupDescriptor>> = new Map();
+
+function namespacedId(pluginName: string, groupId: string, componentId: string) {
+  // basic namespacing: plugin:group:component
+  const id = `${pluginName}:${groupId}:${componentId}`;
+  // Discord customId length limit ~ 100; if too long, hash it down
+  if (id.length <= 100) return id;
+  // simple deterministic hash: base36 of char codes
+  const hash = Array.from(id).reduce((acc, ch) => acc * 31 + ch.charCodeAt(0), 0) >>> 0;
+  return `${pluginName}:${groupId}:${hash.toString(36)}`;
+}
+
+function parseNamespacedId(customId: string) {
+  // Expect plugin:group:component or fallback to split by ':'
+  const parts = customId.split(":");
+  if (parts.length >= 3) {
+    const [pluginName, groupId, ...rest] = parts;
+    const componentId = rest.join(":");
+    return { pluginName, groupId, componentId };
+  }
+  return null;
+}
 
 const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
   manifest: {
@@ -229,6 +292,30 @@ const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
 
     // Expose API
     (this as any).api = api;
+
+    // Global dispatcher: listen for component interactions and route to registered global UI groups
+    ctx.registerEvent({
+      name: "interactionCreate",
+      async execute(pluginCtx, interaction) {
+        if (!(interaction.isButton?.() || interaction.isStringSelectMenu?.())) return;
+        const customId = interaction.customId;
+        if (!customId) return;
+        const parsed = parseNamespacedId(customId);
+        if (!parsed) return;
+        const groups = uiRegistry.get(parsed.pluginName);
+        if (!groups) return;
+        const reg = groups.get(parsed.groupId);
+        if (!reg) return;
+        // only global-scope groups should reach here
+        if ((reg.scope ?? "message") !== "global") return;
+        if (reg.filter && !reg.filter(interaction)) return;
+        try {
+          await reg.handler(pluginCtx as any, interaction, { pluginName: parsed.pluginName, groupId: parsed.groupId, componentId: parsed.componentId });
+        } catch (e) {
+          try { pluginCtx.logger.error("Error dispatching UI handler:", e); } catch {}
+        }
+      },
+    });
 
     ctx.logger.info("Core utilities loaded!");
   },
@@ -707,6 +794,121 @@ function createComponentsHelpers(): ComponentsHelpers {
         });
         return newRow;
       });
+    },
+    define(pluginCtx, descriptor) {
+      const pluginName = String(pluginCtx.dbPrefix ?? "");
+      if (!pluginName) throw new Error("Plugin must have a manifest name to define UI groups");
+      let pluginGroups = uiRegistry.get(pluginName);
+      if (!pluginGroups) {
+        pluginGroups = new Map();
+        uiRegistry.set(pluginName, pluginGroups);
+      }
+      pluginGroups.set(descriptor.id, descriptor);
+      return {
+        pluginName,
+        groupId: descriptor.id,
+        descriptor,
+        build: () => this.build(pluginCtx, descriptor.id),
+      } as UIRegistration;
+    },
+    build(pluginCtx, groupId) {
+      const pluginName = String(pluginCtx.dbPrefix ?? "");
+      const groups = uiRegistry.get(pluginName);
+      if (!groups) return [];
+      const descriptor = groups.get(groupId);
+      if (!descriptor) return [];
+
+      // Build rows: place all components into a single action row (max 5 buttons / menu per row in Discord limits by type)
+      const row = new ActionRowBuilder<any>();
+      descriptor.components.forEach((c, i) => {
+        // Button
+        if ((c as any).label || (c as any).url) {
+          const comp = c as ButtonDescriptor;
+          // Skip link buttons from having customId
+          const hasUrl = !!comp.url;
+          let built: ButtonBuilder;
+          if (hasUrl) {
+            // Link buttons should not have customId
+            built = this.button({ ...comp, customId: undefined as any });
+          } else {
+            let localId = comp.customId ?? comp.label ?? `btn${i}`;
+            let finalId = localId;
+            if (!finalId.includes(":")) finalId = namespacedId(pluginName, groupId, String(localId));
+            built = this.button({ ...comp, customId: finalId });
+          }
+          row.addComponents(built);
+          return;
+        }
+        if ((c as any).options) {
+          const comp = c as StringSelectMenuDescriptor;
+          const localId = comp.customId ?? `select${i}`;
+          const finalId = localId.includes(":") ? localId : namespacedId(pluginName, groupId, String(localId));
+          const built = this.selectMenu({ ...comp, customId: finalId });
+          row.addComponents(built);
+          return;
+        }
+        // For generic select menu descriptors
+        const comp = c as GenericSelectMenuDescriptor;
+        if (comp && (comp as any).minValues !== undefined) {
+          // Treat as generic select (user/role/mentionable)
+          const localId = comp.customId ?? `select${i}`;
+          const finalId = localId.includes(":") ? localId : namespacedId(pluginName, groupId, String(localId));
+          const built = this.userSelect({ ...comp, customId: finalId });
+          row.addComponents(built);
+          return;
+        }
+      });
+      return [row];
+    },
+    async sendWithHandlers(pluginCtx, interaction, options) {
+      const pluginName = String(pluginCtx.dbPrefix ?? "");
+      const groups = uiRegistry.get(pluginName);
+      if (!groups) throw new Error(`Group not defined: ${options.groupId}`);
+      const descriptor = groups.get(options.groupId);
+      if (!descriptor) throw new Error(`Group not defined: ${options.groupId}`);
+
+      // Build rows
+      const rows = this.build(pluginCtx, options.groupId);
+      const timeout = options.timeout ?? descriptor.timeout ?? 120000;
+      const autoDisable = options.autoDisable ?? descriptor.autoDisable ?? true;
+      const filter = options.filter ?? descriptor.filter;
+
+      const { resource } = await interaction.reply({ content: options.content, embeds: options.embeds, components: rows, flags: options.ephemeral ? MessageFlags.Ephemeral : undefined, withResponse: true });
+      const message = resource!.message!;
+
+      const collector = message.createMessageComponentCollector({ time: timeout });
+      collector.on("collect", async (i) => {
+        try {
+          if (filter && !filter(i)) {
+            await i.reply({ content: "This interaction isn't for you.", flags: MessageFlags.Ephemeral });
+            return;
+          }
+          // Extract component id
+          const parsed = parseNamespacedId(i.customId ?? "");
+          if (!parsed) return;
+          await descriptor.handler(pluginCtx as any, i, { pluginName: parsed.pluginName, groupId: parsed.groupId, componentId: parsed.componentId });
+        } catch (e) {
+          try { pluginCtx.logger.error("Error in UI handler:", e); } catch {}
+        }
+      });
+
+      collector.on("end", async () => {
+        if (!autoDisable) return;
+        try {
+          const disabledRows = this.disableAll(rows);
+          await message.edit({ components: disabledRows });
+        } catch (err) {
+          // message might be deleted
+        }
+      });
+    },
+    unregister(pluginCtx, groupId) {
+      const pluginName = String(pluginCtx.dbPrefix ?? "");
+      const groups = uiRegistry.get(pluginName);
+      if (!groups) return false;
+      const removed = groups.delete(groupId);
+      if (groups.size === 0) uiRegistry.delete(pluginName);
+      return removed;
     },
   };
 }

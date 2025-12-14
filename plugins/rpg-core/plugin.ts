@@ -1,4 +1,4 @@
-import { EmbedBuilder, MessageFlags, SlashCommandBuilder, ButtonStyle } from "discord.js";
+import { EmbedBuilder, MessageFlags, SlashCommandBuilder, ButtonStyle, ChatInputCommandInteraction } from "discord.js";
 import type { Plugin, PluginContext, Event } from "@types";
 import { z } from "zod";
 import { CoreUtilsAPI } from "plugins/core-utils/plugin";
@@ -51,55 +51,19 @@ const plugin: Plugin<typeof configSchema> = {
         }
         const api = coreUtils.api;
 
-        // Head daddy slash command for RPG plugin
-        ctx.registerCommand({
-            data: new SlashCommandBuilder()
-                .setName("rpg")
-                .setDescription("rpg core plugin commands")
-                .addSubcommand(sub =>
-                    sub.setName("choose-class")
-                        .setDescription("Choose your RPG class")
-                ),
-
-            async execute(interaction) {
-                const subcommand = interaction.options.getSubcommand();
-
-                switch (subcommand) {
-                    case "choose-class":
-
-                        // Use core-utils embed and components helpers
-                        let rpg_menu_embed = api.embeds.create().setTitle("Choose Your RPG Class").setDescription("Select a class to start your adventure!");
-
-                        const row = api.components.actionRow([
-                            { customId: "rpg_choose_warrior", label: "Warrior", style: ButtonStyle.Primary },
-                            { customId: "rpg_choose_mage", label: "Mage", style: ButtonStyle.Primary },
-                            { customId: "rpg_choose_rogue", label: "Rogue", style: ButtonStyle.Primary },
-                        ]);
-
-                        // send embed and action row
-                        await interaction.reply({ embeds: [rpg_menu_embed], components: row ? [row] : [], flags: MessageFlags.Ephemeral });
-                        break;
-                }
-            },
-        });
-
-        // After you get `api` from core-utils in onLoad:
-        // ctx.registerCommand({...}) // existing command already
-        // Register the event below to handle button interactions
-
-        ctx.registerEvent({
-            name: "interactionCreate",
-            async execute(pluginCtx, interaction) {
-                // only handle button clicks
-                if (!interaction.isButton()) return;
-
-                // make sure it's a button for RPG selection
-                if (!interaction.customId.startsWith("rpg_choose_")) return;
-
-                // extract the class key: e.g. "rpg_choose_warrior" -> "warrior"
-                const classKey = interaction.customId.replace("rpg_choose_", "");
-
-                // Persist the choice to the database via the repo
+        // Define UI group for class selection (message scoped)
+        api.components.define(ctx, {
+            id: "choose-class",
+            scope: "message",
+            components: [
+                { customId: "warrior", label: "Warrior", style: ButtonStyle.Primary },
+                { customId: "mage", label: "Mage", style: ButtonStyle.Primary },
+                { customId: "rogue", label: "Rogue", style: ButtonStyle.Primary },
+            ],
+            handler: async (pluginCtx, interaction, meta) => {
+                // meta.componentId will be the un-namespaced id ('warrior', 'mage', 'rogue')
+                ctx.logger.info(`User ${interaction.user.username} selected class: ${meta.componentId}`);
+                const classKey = meta.componentId;
                 try {
                     const profiles = getUserProfiles(pluginCtx, interaction.user.id);
                     const rpgClass = classKey.charAt(0).toUpperCase() + classKey.slice(1).toLowerCase();
@@ -118,44 +82,49 @@ const plugin: Plugin<typeof configSchema> = {
                             vitality: 1,
                         });
                     } else {
-                        // Update first profile's class (if multiple records exist, update the first one)
-                        await updatePlayerProfile(pluginCtx, profiles[0].id, { rpgClass: rpgClass as any });
+                        await updatePlayerProfile(pluginCtx, profiles[0].id, { rpgClass: rpgClass as any, name: interaction.user.username });
                     }
                 } catch (err) {
-                    // Don't block flow if database operations fail - just log
-                    try { pluginCtx.logger.warn("Failed to persist RPG class selection:", err); } catch {};
+                    try { pluginCtx.logger.warn("Failed to persist RPG class selection:", err); } catch {}
                 }
 
-                // Build a response embed
-                const resultEmbed = api.embeds.success(
-                    `You chose ${classKey}. Your adventure awaits!`,
-                    "Class Selected"
-                );
-
-                // Build a fresh action row (same as the one used in the command) so we can disable it via helper
-                const originalRow = api.components.actionRow([
-                    { customId: "rpg_choose_warrior", label: "Warrior", style: ButtonStyle.Primary },
-                    { customId: "rpg_choose_mage", label: "Mage", style: ButtonStyle.Primary },
-                    { customId: "rpg_choose_rogue", label: "Rogue", style: ButtonStyle.Primary },
-                ]);
-
-                const [disabledRow] = api.components.disableAll(originalRow);
-
-                // Update the originating message that contained the buttons and embed
+                const resultEmbed = api.embeds.success(`You chose ${classKey}. Your adventure awaits!`, "Class Selected");
                 try {
-                    await interaction.update({
-                        embeds: [resultEmbed],
-                        components: [disabledRow],
-                    });
+                    await interaction.update({ embeds: [resultEmbed], components: [] });
                 } catch (err) {
-                    // if update fails (message might be ephemeral or different), fallback to ephemeral reply
-                    await interaction.reply({
-                        embeds: [resultEmbed],
-                        flags: MessageFlags.Ephemeral,
-                    });
+                    await interaction.reply({ embeds: [resultEmbed], flags: MessageFlags.Ephemeral });
                 }
             },
         });
+
+        // Head daddy slash command for RPG plugin
+        ctx.registerCommand({
+            data: new SlashCommandBuilder()
+                .setName("rpg")
+                .setDescription("rpg core plugin commands")
+                .addSubcommand(sub =>
+                    sub.setName("choose-class")
+                        .setDescription("Choose your RPG class")
+                ),
+
+            async execute(interaction) {
+                const subcommand = interaction.options.getSubcommand();
+
+                switch (subcommand) {
+                    case "choose-class":
+                        const rpg_menu_embed = api.embeds.create().setTitle("Choose Your RPG Class").setDescription("Select a class to start your adventure!");
+                        await api.components.sendWithHandlers(ctx, interaction, {
+                            groupId: "choose-class",
+                            content: undefined,
+                            embeds: [rpg_menu_embed],
+                            ephemeral: true,
+                        });
+                        break;
+                }
+            },
+        });
+
+        // UI is handled by the `sendWithHandlers` flow above and the grouped handler registered via `api.components.define`.
 
         ctx.logger.info("RPG Core plugin loaded!");
     },

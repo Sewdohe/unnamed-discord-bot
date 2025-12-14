@@ -114,22 +114,36 @@ export function updatePlayerProfile(ctx: PluginContext, userId: number, newProfi
     const table = `${ctx.dbPrefix}rpg_profiles`;
 
     const oldProfileData = getUserProfile(ctx, userId);
+    if(oldProfileData != null) ctx.logger.debug(`Old profile data: ${JSON.stringify(oldProfileData)}`);
     if (!oldProfileData) return false;
 
-        // Parameterized update
-        ctx.db.run(sql`UPDATE ${sql.raw(table)}
+    // Compute merged values with fallbacks (in case old data has undefined fields)
+    const name = (newProfile.name ?? oldProfileData.name ?? 'Unknown').replace(/'/g, "''");
+    const level = newProfile.level ?? oldProfileData.level ?? 1;
+    const health = newProfile.health ?? oldProfileData.health ?? 100;
+    const experience = newProfile.experience ?? oldProfileData.experience ?? 0;
+    const rpgClass = (newProfile.rpgClass ?? oldProfileData.rpgClass ?? 'Warrior').replace(/'/g, "''");
+    const strength = newProfile.strength ?? oldProfileData.strength ?? 1;
+    const agility = newProfile.agility ?? oldProfileData.agility ?? 1;
+    const intelligence = newProfile.intelligence ?? oldProfileData.intelligence ?? 1;
+    const vitality = newProfile.vitality ?? oldProfileData.vitality ?? 1;
+
+    // Use sql.raw() like moderation plugin does
+    ctx.db.run(sql.raw(`
+        UPDATE ${table}
         SET
-            name = ${newProfile.name ?? oldProfileData.name},
-            level = ${newProfile.level ?? oldProfileData.level},
-            health = ${newProfile.health ?? oldProfileData.health},
-            experience = ${newProfile.experience ?? oldProfileData.experience},
-            rpgClass = ${newProfile.rpgClass ?? oldProfileData.rpgClass},
-            strength = ${newProfile.strength ?? oldProfileData.strength},
-            agility = ${newProfile.agility ?? oldProfileData.agility},
-            intelligence = ${newProfile.intelligence ?? oldProfileData.intelligence},
-            vitality = ${newProfile.vitality ?? oldProfileData.vitality},
+            name = '${name}',
+            level = ${level},
+            health = ${health},
+            experience = ${experience},
+            rpgClass = '${rpgClass}',
+            strength = ${strength},
+            agility = ${agility},
+            intelligence = ${intelligence},
+            vitality = ${vitality},
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${userId}`);
+        WHERE id = ${userId}
+    `));
 
     return true;
 }

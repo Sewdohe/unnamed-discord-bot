@@ -278,6 +278,30 @@ const userSelectRow = api.components.actionRow([
   api.components.userSelect({ customId: "select:user", placeholder: "Choose a user" }),
 ]);
 await interaction.reply({ content: "Select a user", components: [userSelectRow] });
+
+<!-- DSL example -->
+```typescript
+// Define a group once in onLoad
+api.components.define(ctx, {
+  id: "choose-class",
+  scope: "message",
+  components: [
+    { customId: "warrior", label: "Warrior", style: "primary" },
+    { customId: "mage", label: "Mage", style: "primary" },
+  ],
+  handler: async (pluginCtx, interaction, meta) => {
+    // meta.componentId will be 'warrior' or 'mage'
+    await interaction.reply({ content: `You chose ${meta.componentId}` });
+  }
+});
+
+// Send the UI in a command and auto-hook a message-scoped collector
+await api.components.sendWithHandlers(ctx, interaction, {
+  groupId: "choose-class",
+  embeds: [api.embeds.primary("Choose a class")],
+  ephemeral: true,
+});
+```
 ```
 
 ```typescript
