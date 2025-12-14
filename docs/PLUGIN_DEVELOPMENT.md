@@ -280,6 +280,16 @@ const userSelectRow = api.components.actionRow([
 await interaction.reply({ content: "Select a user", components: [userSelectRow] });
 ```
 
+```typescript
+// Disable components on an existing action row (useful after an interaction completes)
+const row = api.components.actionRow([
+  { customId: 'rpg_choose_warrior', label: 'Warrior', style: 'primary' },
+  { customId: 'rpg_choose_mage', label: 'Mage', style: 'primary' }
+]);
+const [disabledRow] = api.components.disableAll(row);
+await interaction.update({ components: [disabledRow] });
+```
+
 **Advanced pagination:**
 
 ```typescript

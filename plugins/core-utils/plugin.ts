@@ -156,6 +156,11 @@ interface ComponentsHelpers {
   // Modal helpers:
   textInput(descriptor: TextInputDescriptor): TextInputBuilder;
   modal(descriptor: ModalDescriptor): ModalBuilder;
+  /**
+   * Return a new array of ActionRowBuilders with all interactive components disabled.
+   * Accepts a single ActionRowBuilder or an array and always returns an array.
+   */
+  disableAll(rows: ActionRowBuilder<any> | ActionRowBuilder<any>[]): ActionRowBuilder<any>[];
 }
 
 type TextInputDescriptor = {
@@ -653,6 +658,55 @@ function createComponentsHelpers(): ComponentsHelpers {
         row.addComponents(this.button(btn as ButtonDescriptor));
       });
       return row;
+    },
+    disableAll(rows) {
+      const rowsArr = Array.isArray(rows) ? rows : [rows];
+      return rowsArr.map(r => {
+        const newRow = new ActionRowBuilder<any>();
+        // Clone each component and set disabled where applicable
+        r.components.forEach(comp => {
+          try {
+            if (comp instanceof ButtonBuilder) {
+              newRow.addComponents(ButtonBuilder.from(comp).setDisabled(true));
+              return;
+            }
+            if (comp instanceof StringSelectMenuBuilder) {
+              newRow.addComponents(StringSelectMenuBuilder.from(comp).setDisabled(true));
+              return;
+            }
+            if (comp instanceof UserSelectMenuBuilder) {
+              newRow.addComponents(UserSelectMenuBuilder.from(comp).setDisabled(true));
+              return;
+            }
+            if (comp instanceof RoleSelectMenuBuilder) {
+              newRow.addComponents(RoleSelectMenuBuilder.from(comp).setDisabled(true));
+              return;
+            }
+            if (comp instanceof MentionableSelectMenuBuilder) {
+              newRow.addComponents(MentionableSelectMenuBuilder.from(comp).setDisabled(true));
+              return;
+            }
+            // Unknown component type - attempt to clone via generic from or fallback to original
+            // (some types may not support .setDisabled; we try to call it in a safe way)
+            try {
+              // @ts-ignore
+              if (typeof comp.setDisabled === "function") {
+                // @ts-ignore
+                newRow.addComponents((comp as any).setDisabled(true));
+                return;
+              }
+            } catch (e) {
+              // noop
+            }
+            // If we can't clone or disable, add the component as-is to avoid crashes.
+            newRow.addComponents(comp as any);
+          } catch (e) {
+            // If anything fails, try to include the original component to preserve layout
+            newRow.addComponents(comp as any);
+          }
+        });
+        return newRow;
+      });
     },
   };
 }
