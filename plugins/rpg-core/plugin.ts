@@ -132,6 +132,7 @@ const plugin: Plugin<typeof configSchema> = {
         // UI is handled by the `sendWithHandlers` flow above and the grouped handler registered via `api.components.define`.
 
         ctx.logger.info("RPG Core plugin loaded!");
+        ctx.logger.info(`Testing auto-update!`);
     },
 };
 
