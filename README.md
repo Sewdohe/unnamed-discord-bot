@@ -42,6 +42,10 @@ discord-bot/
 
 ## Creating a Plugin
 
+> NOTE!
+> For more in-depth guide, see
+> PLUGIN_DEVELOPMENT.md for a detailed overview on plugin creation
+
 Create a new folder in `plugins/` with a `plugin.ts` file:
 
 ```ts
