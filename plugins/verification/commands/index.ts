@@ -2,9 +2,6 @@ import {
   SlashCommandBuilder,
   PermissionFlagsBits,
   MessageFlags,
-  ButtonBuilder,
-  ButtonStyle,
-  ActionRowBuilder,
   EmbedBuilder,
   TextChannel,
   ChatInputCommandInteraction,
@@ -121,29 +118,14 @@ async function handlePanel(ctx: PluginContext<VerificationConfig>, api: CoreUtil
     .setColor(ctx.config.verificationPanel.color)
     .setTimestamp();
 
-  // Create verification button (use core-utils helper if available)
-  const verifyButton = api.components.button
-    ? api.components.button({
-        customId: "verification:verify",
-        label: ctx.config.verificationPanel.buttonLabel,
-        style: ButtonStyle.Success,
-        emoji: "✅",
-      })
-    : new ButtonBuilder()
-        .setCustomId("verification:verify")
-        .setLabel(ctx.config.verificationPanel.buttonLabel)
-        .setStyle(ButtonStyle.Success)
-        .setEmoji("✅");
-
-  const row = api.components.actionRow
-    ? api.components.actionRow([verifyButton])
-    : new ActionRowBuilder<ButtonBuilder>().addComponents(verifyButton);
+  // Build verification button components using the UI framework
+  const components = api.components.build(ctx, "verification-panel");
 
   // Send panel
   try {
     await targetChannel.send({
       embeds: [panelEmbed],
-      components: [row],
+      components,
     });
 
     const successEmbed = api.embeds.success(

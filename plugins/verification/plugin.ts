@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { ButtonStyle, EmbedBuilder, MessageFlags, TextChannel } from "discord.js";
 import type { Plugin, PluginContext } from "@types";
 import type { CoreUtilsAPI } from "../core-utils/plugin";
-import { initDatabase } from "./db/repository";
+import { initDatabase, createVerificationRepo } from "./db/repository";
 import { verifyCommand } from "./commands";
-import { guildMemberAddHandler, interactionCreateHandler } from "./events";
+import { guildMemberAddHandler } from "./events";
 
 // ============ Configuration Schema ============
 
@@ -119,12 +120,111 @@ const plugin: Plugin<typeof configSchema> = {
     // Initialize database
     await initDatabase(ctx);
 
+    // Define verification button UI (global scope - persists across restarts)
+    api.components.define(ctx, {
+      id: "verification-panel",
+      scope: "global",
+      components: [
+        {
+          customId: "verify",
+          label: ctx.config.verificationPanel.buttonLabel,
+          style: ButtonStyle.Success,
+          emoji: "✅",
+        },
+      ],
+      async handler(pluginCtx, interaction) {
+        const repo = createVerificationRepo(pluginCtx);
+
+        // Check if already verified
+        if (repo.isVerified(interaction.user.id, interaction.guildId!)) {
+          await interaction.reply({
+            embeds: [api.embeds.info("You are already verified!", "Already Verified")],
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        // Get member
+        const member = await interaction.guild!.members.fetch(interaction.user.id);
+        if (!member) {
+          await interaction.reply({
+            embeds: [api.embeds.error("Failed to fetch your member data!", "Error")],
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        // Create record if doesn't exist
+        repo.create(interaction.user.id, interaction.guildId!);
+
+        // Mark as verified
+        repo.verify(interaction.user.id, interaction.guildId!);
+
+        // Assign/remove roles
+        try {
+          if (ctx.config.verifiedRoleId && ctx.config.verifiedRoleId !== "") {
+            await member.roles.add(ctx.config.verifiedRoleId);
+          }
+          if (ctx.config.unverifiedRoleId && ctx.config.unverifiedRoleId !== "") {
+            await member.roles.remove(ctx.config.unverifiedRoleId);
+          }
+
+          ctx.logger.info(`User verified: ${interaction.user.tag} (${interaction.user.id})`);
+
+          // Send success message
+          await interaction.reply({
+            embeds: [api.embeds.success("You have been verified! Welcome to the server!", "✅ Verified")],
+            flags: MessageFlags.Ephemeral,
+          });
+
+          // Send welcome message if enabled
+          if (ctx.config.welcomeMessage.enabled) {
+            const welcomeChannelId = ctx.config.welcomeMessage.channelId || ctx.config.verificationChannelId;
+
+            if (welcomeChannelId && welcomeChannelId !== "") {
+              const welcomeChannel = await interaction.guild!.channels.fetch(welcomeChannelId) as TextChannel;
+
+              if (welcomeChannel?.isTextBased()) {
+                const message = ctx.config.welcomeMessage.message
+                  .replace("{user}", `<@${interaction.user.id}>`)
+                  .replace("{username}", interaction.user.username)
+                  .replace("{server}", interaction.guild!.name);
+
+                await welcomeChannel.send({
+                  embeds: [api.embeds.primary(message, "Welcome!")],
+                });
+              }
+            }
+          }
+
+          // Log verification
+          if (ctx.config.logChannelId && ctx.config.logChannelId !== "") {
+            const logChannel = await interaction.guild!.channels.fetch(ctx.config.logChannelId) as TextChannel;
+
+            if (logChannel?.isTextBased()) {
+              const logEmbed = api.embeds.info(
+                `**User:** ${interaction.user} (${interaction.user.id})\n**Method:** Button Click`,
+                "✅ User Verified"
+              );
+
+              await logChannel.send({ embeds: [logEmbed] });
+            }
+          }
+        } catch (error) {
+          ctx.logger.error("Failed to verify user:", error);
+          await interaction.reply({
+            embeds: [api.embeds.error("Failed to verify you! Please contact an administrator.", "Error")],
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+      },
+    });
+
     // Register commands
     ctx.registerCommand(verifyCommand(ctx, api));
 
     // Register events
     ctx.registerEvent(guildMemberAddHandler(ctx, api));
-    ctx.registerEvent(interactionCreateHandler(ctx, api));
 
     ctx.logger.info("Verification plugin loaded!");
   },
