@@ -10,7 +10,7 @@ import type {
   PluginContext,
   Command,
   Event,
-} from "../types";
+} from "../types/";
 import { createLogger } from "./logger";
 import { loadPluginConfig } from "./config";
 import { prefixTable } from "./database";
@@ -164,7 +164,7 @@ export class PluginLoader {
       },
 
       registerEvent: <K extends keyof ClientEvents>(event: Event<K>) => {
-        events.push(event as Event);
+        events.push(event as unknown as Event);
         pluginLogger.debug(`Registered event: ${event.name}`);
       },
 
@@ -244,7 +244,6 @@ export class PluginLoader {
         sub.setDescription(cmd.data.description || "No description");
 
         // Copy options from original command
-        // @ts-expect-error - accessing internal options structure
         const options = cmd.data.options ?? [];
         for (const option of options) {
           // @ts-expect-error - Discord.js internal structure

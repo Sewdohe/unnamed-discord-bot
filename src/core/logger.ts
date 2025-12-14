@@ -1,4 +1,4 @@
-import type { Logger } from "../types";
+import type { Logger } from "../types/";
 
 const colors = {
   reset: "\x1b[0m",

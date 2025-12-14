@@ -34,11 +34,3 @@ export function prefixTable(pluginName: string, tableName: string): string {
   const prefix = pluginName.toLowerCase().replace(/[^a-z0-9]/g, "_");
   return `${prefix}_${tableName}`;
 }
-
-/**
- * Helper to create a prefixed table name for plugins
- */
-export function prefixTable(pluginName: string, tableName: string): string {
-  const prefix = pluginName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-  return `${prefix}_${tableName}`;
-}

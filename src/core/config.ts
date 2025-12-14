@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { parse, stringify } from "yaml";
 import type { z } from "zod";
-import type { PluginConfig } from "../types";
+import type { PluginConfig } from "../types/";
 import { createLogger } from "./logger";
 
 const logger = createLogger("config");

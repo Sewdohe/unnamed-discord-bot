@@ -6,7 +6,7 @@ import {
   REST,
   Routes,
 } from "discord.js";
-import type { Command, PluginContext } from "../types";
+import type { Command, PluginContext } from "../types/";
 import { createLogger } from "./logger";
 import { initDatabase } from "./database";
 import { PluginLoader } from "./plugin-loader";
@@ -47,7 +47,7 @@ export class Bot {
 
       for (const loaded of loadedPlugins.values()) {
         // Check if this command came from this plugin
-        if (loaded.commands.some(c => c.data.name === command.data.name) ||
+        if (loaded.commands.some((c: any) => c.data.name === command.data.name) ||
             loaded.plugin.manifest.commandGroup?.name === command.data.name) {
           ctx = loaded.context;
           break;
