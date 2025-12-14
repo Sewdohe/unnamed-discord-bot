@@ -6,7 +6,7 @@ import type {
   Client,
   ClientEvents,
 } from "discord.js";
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import type { Db, ObjectId } from "mongodb";
 import type { z } from "zod";
 
 // ============ Commands ============
@@ -75,7 +75,7 @@ export interface PluginContext<TConfig = Record<string, unknown>> {
   client: Client;
   logger: Logger;
   config: TConfig;
-  db: BunSQLiteDatabase;
+  db: Db;
   dbPrefix: string;
   registerCommand(command: Command): void;
   registerEvent<K extends keyof ClientEvents>(event: Event<K>): void;
@@ -113,30 +113,30 @@ export interface QueryBuilder<T = unknown> {
   limit(count: number): this;
   offset(count: number): this;
 
-  // Execution
-  first(): T | null;
-  all(): T[];
-  count(): number;
+  // Execution (now async for MongoDB)
+  first(): Promise<T | null>;
+  all(): Promise<T[]>;
+  count(): Promise<number>;
 
   // Mutations
   insert(data: Partial<T>): this;
   update(data: Partial<T>): this;
   delete(): this;
-  execute(): void;
+  execute(): Promise<void>;
 }
 
 export interface Repository<T, TCreate = Partial<T>, TUpdate = Partial<T>> {
-  find(id: number | string): T | null;
-  findBy(field: string, value: unknown): T | null;
-  findAll(): T[];
-  findAllBy(field: string, value: unknown): T[];
+  find(id: string | ObjectId): Promise<T | null>;
+  findBy(field: string, value: unknown): Promise<T | null>;
+  findAll(): Promise<T[]>;
+  findAllBy(field: string, value: unknown): Promise<T[]>;
 
-  create(data: TCreate): number;
-  update(id: number | string, data: TUpdate): boolean;
-  delete(id: number | string): boolean;
+  create(data: TCreate): Promise<string>;
+  update(id: string | ObjectId, data: TUpdate): Promise<boolean>;
+  delete(id: string | ObjectId): Promise<boolean>;
 
-  exists(id: number | string): boolean;
-  count(): number;
+  exists(id: string | ObjectId): Promise<boolean>;
+  count(): Promise<number>;
   query(): QueryBuilder<T>;
 }
 

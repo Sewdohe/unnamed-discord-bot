@@ -16,7 +16,7 @@ const logger = createLogger("bot");
 export class Bot {
   public client: Client;
   public commands = new Collection<string, { command: Command; ctx: PluginContext }>();
-  private pluginLoader: PluginLoader;
+  private pluginLoader!: PluginLoader;
 
   constructor() {
     this.client = new Client({
@@ -27,12 +27,13 @@ export class Bot {
         GatewayIntentBits.MessageContent,
       ],
     });
-
-    const db = initDatabase();
-    this.pluginLoader = new PluginLoader(this.client, db);
   }
 
   async start(): Promise<void> {
+    // Initialize MongoDB connection
+    const db = await initDatabase();
+    this.pluginLoader = new PluginLoader(this.client, db);
+
     // Load all plugins
     await this.pluginLoader.loadAll();
 

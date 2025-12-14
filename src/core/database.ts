@@ -1,36 +1,66 @@
-import { Database } from "bun:sqlite";
-import { drizzle } from "drizzle-orm/bun-sqlite";
-import { join } from "path";
-import { mkdirSync, existsSync } from "fs";
+import { MongoClient, Db } from "mongodb";
 import { createLogger } from "./logger";
 
 const logger = createLogger("database");
 
-const DB_PATH = join(process.cwd(), "data", "bot.db");
+let mongoClient: MongoClient;
+let database: Db;
 
-export function initDatabase() {
-  // Ensure data directory exists
-  const dataDir = join(process.cwd(), "data");
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
+/**
+ * Initialize MongoDB connection
+ */
+export async function initDatabase(): Promise<Db> {
+  const uri = process.env.MONGODB_URI || "mongodb://localhost:27017";
+
+  logger.info(`Connecting to MongoDB at ${uri.split('@')[1] || 'localhost'}`);
+
+  mongoClient = new MongoClient(uri, {
+    maxPoolSize: 10,
+    minPoolSize: 2,
+    serverSelectionTimeoutMS: 5000,
+  });
+
+  try {
+    await mongoClient.connect();
+    database = mongoClient.db("discord-bot");
+
+    logger.info("Successfully connected to MongoDB");
+
+    return database;
+  } catch (error) {
+    logger.error("Failed to connect to MongoDB:", error);
+    throw error;
   }
-
-  logger.info(`Initializing database at ${DB_PATH}`);
-
-  const sqlite = new Database(DB_PATH);
-  
-  // Enable WAL mode for better concurrent access
-  sqlite.exec("PRAGMA journal_mode = WAL");
-
-  const db = drizzle(sqlite);
-
-  return db;
 }
 
 /**
- * Helper to create a prefixed table name for plugins
+ * Get the initialized database instance
  */
-export function prefixTable(pluginName: string, tableName: string): string {
-  const prefix = pluginName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-  return `${prefix}_${tableName}`;
+export function getDatabase(): Db {
+  if (!database) {
+    throw new Error("Database not initialized. Call initDatabase() first.");
+  }
+  return database;
 }
+
+/**
+ * Close MongoDB connection
+ */
+export async function closeDatabase(): Promise<void> {
+  if (mongoClient) {
+    await mongoClient.close();
+    logger.info("MongoDB connection closed");
+  }
+}
+
+/**
+ * Helper to create a prefixed collection name for plugins
+ * Replaces prefixTable from SQLite version
+ */
+export function prefixCollection(pluginName: string, collectionName: string): string {
+  const prefix = pluginName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+  return `${prefix}_${collectionName}`;
+}
+
+// Keep old function name for backward compatibility during migration
+export const prefixTable = prefixCollection;

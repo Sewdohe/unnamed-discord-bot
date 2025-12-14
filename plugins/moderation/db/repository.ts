@@ -1,22 +1,20 @@
+import { Collection, Document, ObjectId, OptionalId } from "mongodb";
 import { BaseRepository } from "../../../src/core/repository";
 import type { PluginContext } from "@types";
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import type { CoreUtilsAPI } from "../../core-utils/plugin";
-import type { User } from "discord.js";
-import { sql } from "drizzle-orm";
 
 // ============ Types ============
 
-export interface ModCase {
-  id: number;
-  type: string;
+export interface ModCase extends Document {
+  _id?: ObjectId;
+  type: CaseType;
   user_id: string;
   user_tag: string;
   moderator_id: string;
   moderator_tag: string;
   reason: string;
   duration: number | null;
-  created_at: string;
+  created_at: Date;
 }
 
 export type CaseType = "kick" | "ban" | "unban" | "timeout" | "warn" | "purge" | "lock" | "unlock" | "automod_filter" | "automod_invite";
@@ -24,14 +22,14 @@ export type CaseType = "kick" | "ban" | "unban" | "timeout" | "warn" | "purge" |
 // ============ Repository ============
 
 export class ModerationRepository extends BaseRepository<ModCase> {
-  constructor(db: BunSQLiteDatabase, tableName: string) {
-    super(db, tableName, 'id');
+  constructor(collection: Collection<ModCase>) {
+    super(collection);
   }
 
   /**
    * Create a new moderation case
    */
-  createCase(
+  async createCase(
     type: CaseType,
     userId: string,
     userTag: string,
@@ -39,26 +37,33 @@ export class ModerationRepository extends BaseRepository<ModCase> {
     moderatorTag: string,
     reason: string,
     duration: number | null = null
-  ): number {
-    const query = sql`INSERT INTO ${sql.raw(this.tableName)} (type, user_id, user_tag, moderator_id, moderator_tag, reason, duration) VALUES (${type}, ${userId}, ${userTag}, ${moderatorId}, ${moderatorTag}, ${reason}, ${duration})`;
-    this.db.run(query);
+  ): Promise<string> {
+    const result = await this.collection.insertOne({
+      type,
+      user_id: userId,
+      user_tag: userTag,
+      moderator_id: moderatorId,
+      moderator_tag: moderatorTag,
+      reason,
+      duration,
+      created_at: new Date(),
+    } as OptionalId<ModCase>);
 
-    const result = this.db.get<{ id: number }>(sql.raw('SELECT last_insert_rowid() as id'));
-    return result?.id ?? 0;
+    return result.insertedId.toString();
   }
 
   /**
    * Get a case by ID
    */
-  getCase(caseId: number): ModCase | null {
-    return this.find(caseId);
+  async getCase(caseId: string): Promise<ModCase | null> {
+    return await this.find(caseId);
   }
 
   /**
    * Get all cases for a user
    */
-  getUserCases(userId: string): ModCase[] {
-    return this.query()
+  async getUserCases(userId: string): Promise<ModCase[]> {
+    return await this.query()
       .where('user_id', '=', userId)
       .orderBy('created_at', 'DESC')
       .all();
@@ -67,8 +72,8 @@ export class ModerationRepository extends BaseRepository<ModCase> {
   /**
    * Update the reason for a case
    */
-  updateCaseReason(caseId: number, newReason: string): boolean {
-    return this.update(caseId, { reason: newReason });
+  async updateCaseReason(caseId: string, newReason: string): Promise<boolean> {
+    return await this.update(caseId, { reason: newReason });
   }
 }
 
@@ -81,28 +86,18 @@ export function createModerationRepo(
   ctx: PluginContext,
   api: CoreUtilsAPI
 ): ModerationRepository {
-  const tableName = `${ctx.dbPrefix}cases`;
-  return new ModerationRepository(ctx.db, tableName);
+  const collection = api.database.getCollection<ModCase>(ctx, 'cases');
+
+  // Create indexes
+  collection.createIndex({ user_id: 1, created_at: -1 }).catch(() => {});
+  collection.createIndex({ type: 1 }).catch(() => {});
+
+  return new ModerationRepository(collection);
 }
 
 // ============ Database Initialization ============
 
+// NO LONGER NEEDED - MongoDB creates collections automatically!
 export async function initDatabase(ctx: PluginContext): Promise<void> {
-  const table = `${ctx.dbPrefix}cases`;
-
-  ctx.db.run(sql.raw(`
-    CREATE TABLE IF NOT EXISTS ${table} (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      user_tag TEXT NOT NULL,
-      moderator_id TEXT NOT NULL,
-      moderator_tag TEXT NOT NULL,
-      reason TEXT NOT NULL,
-      duration INTEGER,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `));
-
-  ctx.logger.debug(`Initialized table: ${table}`);
+  ctx.logger.debug("MongoDB auto-creates collections - no initialization needed");
 }

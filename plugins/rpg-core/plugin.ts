@@ -70,11 +70,11 @@ const plugin: Plugin<typeof configSchema> = {
                 ctx.logger.info(`User ${interaction.user.username} selected class: ${meta.componentId}`);
                 const classKey = meta.componentId;
                 try {
-                    const profiles = rpgRepo.getProfilesByDiscordId(interaction.user.id);
+                    const profile = await rpgRepo.getProfileByDiscordId(interaction.user.id);
                     const rpgClass = classKey.charAt(0).toUpperCase() + classKey.slice(1).toLowerCase();
-                    if (!profiles || profiles.length === 0) {
+                    if (!profile) {
                         // Create minimal profile (id will be auto-assigned by DB)
-                        rpgRepo.createProfile({
+                        await rpgRepo.createProfile({
                             discord_id: interaction.user.id,
                             name: interaction.user.username,
                             level: 1,
@@ -87,7 +87,7 @@ const plugin: Plugin<typeof configSchema> = {
                             vitality: 1,
                         });
                     } else {
-                        rpgRepo.updateProfile(profiles[0].id, { rpgClass: rpgClass as any, name: interaction.user.username });
+                        await rpgRepo.updateProfile(interaction.user.id, { rpgClass: rpgClass as any, name: interaction.user.username });
                     }
                 } catch (err) {
                     try { pluginCtx.logger.warn("Failed to persist RPG class selection:", err); } catch {}

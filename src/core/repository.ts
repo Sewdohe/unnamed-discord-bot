@@ -1,53 +1,44 @@
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import { Collection, Document, ObjectId, OptionalId } from "mongodb";
 import type { Repository as IRepository, SchemaValidator, QueryBuilder } from "@types";
-import { createQueryBuilder } from "./query-builder";
-import { sql } from "drizzle-orm";
+import { MongoQueryBuilder } from "./query-builder";
 
 /**
- * Base repository class providing common CRUD operations.
+ * Base repository class providing common CRUD operations for MongoDB.
  * Extend this class to create domain-specific repositories.
  *
- * @template T - The record type
+ * @template T - The document type (must extend MongoDB Document)
  * @template TCreate - The type for create operations (defaults to Partial<T>)
  * @template TUpdate - The type for update operations (defaults to Partial<T>)
  *
  * @example
  * ```typescript
  * class UserRepository extends BaseRepository<User> {
- *   constructor(db: BunSQLiteDatabase, tableName: string) {
- *     super(db, tableName, 'id');
+ *   constructor(collection: Collection<User>) {
+ *     super(collection);
  *   }
  *
  *   // Add domain-specific methods
- *   findByEmail(email: string): User | null {
- *     return this.findBy('email', email);
+ *   async findByEmail(email: string): Promise<User | null> {
+ *     return await this.collection.findOne({ email });
  *   }
  * }
  * ```
  */
-export abstract class BaseRepository<T, TCreate = Partial<T>, TUpdate = Partial<T>>
+export abstract class BaseRepository<T extends Document, TCreate = Partial<T>, TUpdate = Partial<T>>
   implements IRepository<T, TCreate, TUpdate> {
 
-  protected db: BunSQLiteDatabase;
-  protected tableName: string;
-  protected primaryKey: string;
+  protected collection: Collection<T>;
   protected validator?: SchemaValidator<T>;
 
   /**
-   * @param db Database instance
-   * @param tableName Table name (should already include prefix)
-   * @param primaryKey Primary key field name (defaults to 'id')
+   * @param collection MongoDB collection instance
    * @param validator Optional schema validator for runtime validation
    */
   constructor(
-    db: BunSQLiteDatabase,
-    tableName: string,
-    primaryKey: string = 'id',
+    collection: Collection<T>,
     validator?: SchemaValidator<T>
   ) {
-    this.db = db;
-    this.tableName = tableName;
-    this.primaryKey = primaryKey;
+    this.collection = collection;
     this.validator = validator;
   }
 
@@ -58,157 +49,142 @@ export abstract class BaseRepository<T, TCreate = Partial<T>, TUpdate = Partial<
    *
    * @example
    * ```typescript
-   * const users = repo.query()
-   *   .where('active', '=', 1)
+   * const users = await repo.query()
+   *   .where('active', '=', true)
    *   .orderBy('created_at', 'DESC')
    *   .limit(10)
    *   .all();
    * ```
    */
   query(): QueryBuilder<T> {
-    return createQueryBuilder<T>(this.db, this.tableName);
+    return new MongoQueryBuilder<T>(this.collection);
   }
 
   // ============ Basic CRUD Operations ============
 
   /**
-   * Find a record by primary key
+   * Find a document by MongoDB _id
    *
-   * @param id Primary key value
-   * @returns Record or null if not found
+   * @param id MongoDB ObjectId (string or ObjectId instance)
+   * @returns Document or null if not found
    */
-  find(id: number | string): T | null {
-    const result = this.query()
-      .where(this.primaryKey, '=', id)
-      .first();
+  async find(id: string | ObjectId): Promise<T | null> {
+    const _id = typeof id === 'string' ? new ObjectId(id) : id;
+    const result = await this.collection.findOne({ _id } as any);
 
     return this.validateResult(result);
   }
 
   /**
-   * Find a single record by any field
+   * Find a single document by any field
    *
    * @param field Field name
    * @param value Field value
-   * @returns Record or null if not found
+   * @returns Document or null if not found
    */
-  findBy(field: string, value: unknown): T | null {
-    const result = this.query()
-      .where(field, '=', value)
-      .first();
+  async findBy(field: string, value: unknown): Promise<T | null> {
+    const result = await this.collection.findOne({ [field]: value } as any);
 
     return this.validateResult(result);
   }
 
   /**
-   * Find all records in the table
+   * Find all documents in the collection
    *
-   * @returns Array of records
+   * @returns Array of documents
    */
-  findAll(): T[] {
-    const results = this.query().all();
+  async findAll(): Promise<T[]> {
+    const results = await this.collection.find({}).toArray();
     return this.validateResults(results);
   }
 
   /**
-   * Find all records matching a field value
+   * Find all documents matching a field value
    *
    * @param field Field name
    * @param value Field value
-   * @returns Array of matching records
+   * @returns Array of matching documents
    */
-  findAllBy(field: string, value: unknown): T[] {
-    const results = this.query()
-      .where(field, '=', value)
-      .all();
+  async findAllBy(field: string, value: unknown): Promise<T[]> {
+    const results = await this.collection.find({ [field]: value } as any).toArray();
 
     return this.validateResults(results);
   }
 
   /**
-   * Create a new record
+   * Create a new document
    *
-   * @param data Record data
-   * @returns ID of created record
+   * @param data Document data
+   * @returns ID of created document (as string)
    */
-  create(data: TCreate): number {
+  async create(data: TCreate): Promise<string> {
     // Validate if validator is present
     const validated = this.validator?.validate(data) ?? data;
 
-    // Insert record
-    this.query()
-      .insert(validated as Partial<T>)
-      .execute();
+    // Insert document
+    const result = await this.collection.insertOne(validated as OptionalId<T>);
 
-    // Get last inserted ID
-    const result = this.db.get<{ id: number }>(sql.raw('SELECT last_insert_rowid() as id'));
-
-    return result?.id ?? 0;
+    return result.insertedId.toString();
   }
 
   /**
-   * Update an existing record
+   * Update an existing document by _id
    *
-   * @param id Primary key value
+   * @param id MongoDB ObjectId (string or ObjectId instance)
    * @param data Updated fields
-   * @returns true if updated, false if record not found
+   * @returns true if updated, false if document not found
    */
-  update(id: number | string, data: TUpdate): boolean {
-    // Check if record exists
-    const existingRecord = this.find(id);
-    if (!existingRecord) return false;
+  async update(id: string | ObjectId, data: TUpdate): Promise<boolean> {
+    const _id = typeof id === 'string' ? new ObjectId(id) : id;
 
     // Validate if validator is present
     const validated = this.validator?.partial(data) ?? data;
 
-    // Update record
-    this.query()
-      .where(this.primaryKey, '=', id)
-      .update(validated as Partial<T>)
-      .execute();
+    // Update document
+    const result = await this.collection.updateOne(
+      { _id } as any,
+      { $set: validated }
+    );
 
-    return true;
+    return result.modifiedCount > 0;
   }
 
   /**
-   * Delete a record
+   * Delete a document by _id
    *
-   * @param id Primary key value
-   * @returns true if deleted, false if record not found
+   * @param id MongoDB ObjectId (string or ObjectId instance)
+   * @returns true if deleted, false if document not found
    */
-  delete(id: number | string): boolean {
-    // Check if record exists
-    const existingRecord = this.find(id);
-    if (!existingRecord) return false;
+  async delete(id: string | ObjectId): Promise<boolean> {
+    const _id = typeof id === 'string' ? new ObjectId(id) : id;
 
-    // Delete record
-    this.query()
-      .where(this.primaryKey, '=', id)
-      .delete()
-      .execute();
+    // Delete document
+    const result = await this.collection.deleteOne({ _id } as any);
 
-    return true;
+    return result.deletedCount > 0;
   }
 
   // ============ Utility Methods ============
 
   /**
-   * Check if a record exists
+   * Check if a document exists by _id
    *
-   * @param id Primary key value
-   * @returns true if record exists
+   * @param id MongoDB ObjectId (string or ObjectId instance)
+   * @returns true if document exists
    */
-  exists(id: number | string): boolean {
-    return this.find(id) !== null;
+  async exists(id: string | ObjectId): Promise<boolean> {
+    const _id = typeof id === 'string' ? new ObjectId(id) : id;
+    const count = await this.collection.countDocuments({ _id } as any);
+    return count > 0;
   }
 
   /**
-   * Count all records in the table
+   * Count all documents in the collection
    *
-   * @returns Number of records
+   * @returns Number of documents
    */
-  count(): number {
-    return this.query().count();
+  async count(): Promise<number> {
+    return await this.collection.countDocuments();
   }
 
   // ============ Validation Helpers ============
@@ -247,5 +223,14 @@ export abstract class BaseRepository<T, TCreate = Partial<T>, TUpdate = Partial<
         return null;
       }
     }).filter((r): r is T => r !== null);
+  }
+
+  // ============ Convenience Aliases ============
+
+  /**
+   * Alias for findAll() - matches SQLite repository interface
+   */
+  async all(): Promise<T[]> {
+    return await this.findAll();
   }
 }

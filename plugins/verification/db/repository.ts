@@ -1,94 +1,101 @@
+import { Collection, Document, ObjectId, OptionalId } from "mongodb";
 import { BaseRepository } from "../../../src/core/repository";
 import type { SchemaValidator, PluginContext } from "@types";
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import type { CoreUtilsAPI } from "../../core-utils/plugin";
 import { z } from "zod";
-import { sql } from "drizzle-orm";
 
 // ============ Types ============
 
-export interface VerificationRecord {
-  id: number;
+export interface VerificationRecord extends Document {
+  _id?: ObjectId;
   user_id: string;
   guild_id: string;
-  verified: number; // SQLite boolean (0 or 1)
-  joined_at: string;
-  verified_at: string | null;
-  created_at: string;
+  verified: boolean;
+  joined_at: Date;
+  verified_at?: Date | null;
+  created_at: Date;
 }
 
 // ============ Repository ============
 
 export class VerificationRepository extends BaseRepository<VerificationRecord> {
   constructor(
-    db: BunSQLiteDatabase,
-    tableName: string,
-    primaryKey: string,
+    collection: Collection<VerificationRecord>,
     validator?: SchemaValidator<VerificationRecord>
   ) {
-    super(db, tableName, primaryKey, validator);
+    super(collection, validator);
   }
 
   /**
    * Create a new verification record for a user in a guild
-   * Uses INSERT OR IGNORE to avoid errors if record already exists
+   * Uses upsert to avoid errors if record already exists
    */
-  createRecord(userId: string, guildId: string): void {
-    const now = new Date().toISOString();
-
-    // Use raw SQL for INSERT OR IGNORE (not supported by query builder)
-    const query = sql`INSERT OR IGNORE INTO ${sql.raw(this.tableName)} (user_id, guild_id, verified, joined_at) VALUES (${userId}, ${guildId}, ${0}, ${now})`;
-    this.db.run(query);
+  async createRecord(userId: string, guildId: string): Promise<void> {
+    await this.collection.updateOne(
+      { user_id: userId, guild_id: guildId },
+      {
+        $setOnInsert: {
+          verified: false,
+          joined_at: new Date(),
+          created_at: new Date(),
+        }
+      },
+      { upsert: true }
+    );
   }
 
   /**
    * Mark a user as verified in a guild
    */
-  verify(userId: string, guildId: string): void {
-    const now = new Date().toISOString();
-    this.query()
-      .where('user_id', '=', userId)
-      .where('guild_id', '=', guildId)
-      .update({ verified: 1, verified_at: now })
-      .execute();
+  async verify(userId: string, guildId: string): Promise<void> {
+    await this.collection.updateOne(
+      { user_id: userId, guild_id: guildId },
+      {
+        $set: {
+          verified: true,
+          verified_at: new Date(),
+        }
+      }
+    );
   }
 
   /**
    * Mark a user as unverified in a guild
    */
-  unverify(userId: string, guildId: string): void {
-    this.query()
-      .where('user_id', '=', userId)
-      .where('guild_id', '=', guildId)
-      .update({ verified: 0, verified_at: null })
-      .execute();
+  async unverify(userId: string, guildId: string): Promise<void> {
+    await this.collection.updateOne(
+      { user_id: userId, guild_id: guildId },
+      {
+        $set: {
+          verified: false,
+          verified_at: null,
+        }
+      }
+    );
   }
 
   /**
    * Get a verification record for a user in a guild
    */
-  get(userId: string, guildId: string): VerificationRecord | null {
-    return this.query()
-      .where('user_id', '=', userId)
-      .where('guild_id', '=', guildId)
-      .first();
+  async get(userId: string, guildId: string): Promise<VerificationRecord | null> {
+    return await this.collection.findOne({ user_id: userId, guild_id: guildId });
   }
 
   /**
    * Check if a user is verified in a guild
    */
-  isVerified(userId: string, guildId: string): boolean {
-    const record = this.get(userId, guildId);
-    return record?.verified === 1;
+  async isVerified(userId: string, guildId: string): Promise<boolean> {
+    const record = await this.get(userId, guildId);
+    return record?.verified === true;
   }
 
   /**
    * Get all unverified users in a guild
    */
-  getUnverified(guildId: string): VerificationRecord[] {
-    return this.query()
+  async getUnverified(guildId: string): Promise<VerificationRecord[]> {
+    return await this.query()
       .where('guild_id', '=', guildId)
-      .where('verified', '=', 0)
+      .where('verified', '=', false)
       .orderBy('joined_at', 'DESC')
       .all();
   }
@@ -96,10 +103,10 @@ export class VerificationRepository extends BaseRepository<VerificationRecord> {
   /**
    * Get all verified users in a guild
    */
-  getVerified(guildId: string): VerificationRecord[] {
-    return this.query()
+  async getVerified(guildId: string): Promise<VerificationRecord[]> {
+    return await this.query()
       .where('guild_id', '=', guildId)
-      .where('verified', '=', 1)
+      .where('verified', '=', true)
       .orderBy('verified_at', 'DESC')
       .all();
   }
@@ -107,27 +114,19 @@ export class VerificationRepository extends BaseRepository<VerificationRecord> {
   /**
    * Delete a verification record
    */
-  deleteRecord(userId: string, guildId: string): boolean {
-    const exists = this.get(userId, guildId) !== null;
-    if (!exists) return false;
-
-    this.query()
-      .where('user_id', '=', userId)
-      .where('guild_id', '=', guildId)
-      .delete()
-      .execute();
-
-    return true;
+  async deleteRecord(userId: string, guildId: string): Promise<boolean> {
+    const result = await this.collection.deleteOne({ user_id: userId, guild_id: guildId });
+    return result.deletedCount > 0;
   }
 
   /**
-   * Get all unverified users who joined before a certain timestamp
+   * Get all unverified users who joined before a certain date
    */
-  getUnverifiedBefore(guildId: string, beforeTimestamp: string): VerificationRecord[] {
-    return this.query()
+  async getUnverifiedBefore(guildId: string, beforeDate: Date): Promise<VerificationRecord[]> {
+    return await this.query()
       .where('guild_id', '=', guildId)
-      .where('verified', '=', 0)
-      .where('joined_at', '<', beforeTimestamp)
+      .where('verified', '=', false)
+      .where('joined_at', '<', beforeDate)
       .orderBy('joined_at', 'ASC')
       .all();
   }
@@ -135,15 +134,17 @@ export class VerificationRepository extends BaseRepository<VerificationRecord> {
   /**
    * Get verification statistics for a guild
    */
-  getStats(guildId: string): { total: number; verified: number; unverified: number } {
-    const allRecords = this.query()
-      .where('guild_id', '=', guildId)
-      .all();
+  async getStats(guildId: string): Promise<{ total: number; verified: number; unverified: number }> {
+    const [total, verified] = await Promise.all([
+      this.collection.countDocuments({ guild_id: guildId }),
+      this.collection.countDocuments({ guild_id: guildId, verified: true })
+    ]);
 
-    const total = allRecords.length;
-    const verified = allRecords.filter(r => r.verified === 1).length;
-
-    return { total, verified, unverified: total - verified };
+    return {
+      total,
+      verified,
+      unverified: total - verified
+    };
   }
 }
 
@@ -159,38 +160,31 @@ export function createVerificationRepo(
   // Create schema validator
   const validator = api.database.createValidator(
     z.object({
-      id: z.number(),
+      _id: z.instanceof(ObjectId).optional(),
       user_id: api.database.schemas.discordId,
       guild_id: api.database.schemas.discordId,
-      verified: api.database.schemas.boolean,
-      joined_at: api.database.schemas.timestamp,
-      verified_at: api.database.schemas.timestamp.nullable(),
-      created_at: api.database.schemas.timestamp,
+      verified: z.boolean(),
+      joined_at: z.date(),
+      verified_at: z.date().nullable().optional(),
+      created_at: z.date(),
     })
   );
 
-  // Create repository instance directly
-  const tableName = `${ctx.dbPrefix}verifications`;
-  return new VerificationRepository(ctx.db, tableName, 'id', validator);
+  // Get MongoDB collection
+  const collection = api.database.getCollection<VerificationRecord>(ctx, 'verifications');
+
+  // Create indexes for performance
+  collection.createIndex({ user_id: 1, guild_id: 1 }, { unique: true }).catch(() => {});
+  collection.createIndex({ guild_id: 1, verified: 1 }).catch(() => {});
+  collection.createIndex({ guild_id: 1, joined_at: 1 }).catch(() => {});
+
+  return new VerificationRepository(collection, validator);
 }
 
 // ============ Database Initialization ============
 
+// NO LONGER NEEDED - MongoDB creates collections automatically!
+// Kept for backward compatibility during migration - can be removed later
 export async function initDatabase(ctx: PluginContext): Promise<void> {
-  const table = `${ctx.dbPrefix}verifications`;
-
-  ctx.db.run(sql.raw(`
-    CREATE TABLE IF NOT EXISTS ${table} (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id TEXT NOT NULL,
-      guild_id TEXT NOT NULL,
-      verified INTEGER NOT NULL DEFAULT 0,
-      joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      verified_at TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(user_id, guild_id)
-    )
-  `));
-
-  ctx.logger.debug(`Initialized table: ${table}`);
+  ctx.logger.debug("MongoDB auto-creates collections - no initialization needed");
 }

@@ -1,30 +1,21 @@
-import { sql } from "drizzle-orm";
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import type { QueryBuilder as IQueryBuilder, WhereCondition, WhereOperator } from "@types";
+import { Collection, Filter, UpdateFilter, Sort, Document } from "mongodb";
+import type { QueryBuilder as IQueryBuilder, WhereOperator } from "@types";
 
 /**
- * Query builder for constructing safe, parameterized SQL queries.
- * Prevents SQL injection by using parameter binding instead of string interpolation.
+ * MongoDB Query builder for constructing safe, parameterized queries.
+ * Converts SQL-like query builder API to MongoDB filter objects.
  */
-export class QueryBuilder<T = unknown> implements IQueryBuilder<T> {
-  private db: BunSQLiteDatabase;
-  private tableName: string;
+export class MongoQueryBuilder<T extends Document> implements IQueryBuilder<T> {
+  private collection: Collection<T>;
+  private filters: Filter<T>[] = [];
+  private sortSpec: Sort = {};
+  private limitCount?: number;
+  private skipCount?: number;
+  private updateDoc?: UpdateFilter<T>;
+  private deleteFlag = false;
 
-  // Query state
-  private selectColumns: string[] = ['*'];
-  private whereConditions: WhereCondition[] = [];
-  private orderByClause: { field: string; direction: 'ASC' | 'DESC' }[] = [];
-  private limitValue?: number;
-  private offsetValue?: number;
-
-  // Mutation state
-  private insertData?: Record<string, unknown>;
-  private updateData?: Record<string, unknown>;
-  private isDeleteQuery = false;
-
-  constructor(db: BunSQLiteDatabase, tableName: string) {
-    this.db = db;
-    this.tableName = tableName;
+  constructor(collection: Collection<T>) {
+    this.collection = collection;
   }
 
   // ============ Filtering Methods ============
@@ -33,96 +24,177 @@ export class QueryBuilder<T = unknown> implements IQueryBuilder<T> {
    * Add a WHERE condition (defaults to AND conjunction)
    */
   where(field: string, operator: WhereOperator, value: unknown): this {
-    this.whereConditions.push({ field, operator, value, conjunction: 'AND' });
+    const filter = this.buildFilter(field, operator, value);
+    this.filters.push(filter as Filter<T>);
     return this;
-  }
-
-  /**
-   * Add a WHERE condition with explicit AND conjunction
-   */
-  whereAnd(field: string, operator: WhereOperator, value: unknown): this {
-    return this.where(field, operator, value);
   }
 
   /**
    * Add a WHERE condition with OR conjunction
    */
   whereOr(field: string, operator: WhereOperator, value: unknown): this {
-    this.whereConditions.push({ field, operator, value, conjunction: 'OR' });
+    // MongoDB $or operator - wrap in array for later processing
+    const filter = this.buildFilter(field, operator, value);
+    this.filters.push({ $or: [filter] } as Filter<T>);
     return this;
+  }
+
+  /**
+   * Build MongoDB filter object from SQL-like operator
+   */
+  private buildFilter(field: string, operator: WhereOperator, value: unknown): object {
+    switch (operator) {
+      case '=':
+        return { [field]: value };
+
+      case '!=':
+        return { [field]: { $ne: value } };
+
+      case '>':
+        return { [field]: { $gt: value } };
+
+      case '<':
+        return { [field]: { $lt: value } };
+
+      case '>=':
+        return { [field]: { $gte: value } };
+
+      case '<=':
+        return { [field]: { $lte: value } };
+
+      case 'LIKE': {
+        // Convert SQL LIKE to MongoDB regex
+        // % becomes .* (match any characters)
+        // _ becomes . (match single character)
+        const regexStr = value
+          .toString()
+          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // Escape special regex chars
+          .replace(/%/g, '.*')
+          .replace(/_/g, '.');
+        return { [field]: { $regex: new RegExp(`^${regexStr}$`, 'i') } };
+      }
+
+      case 'IN':
+        return { [field]: { $in: Array.isArray(value) ? value : [value] } };
+
+      case 'NOT IN':
+        return { [field]: { $nin: Array.isArray(value) ? value : [value] } };
+
+      case 'IS':
+        return { [field]: null };
+
+      case 'IS NOT':
+        return { [field]: { $ne: null } };
+
+      default:
+        throw new Error(`Unsupported operator: ${operator}`);
+    }
   }
 
   // ============ Ordering & Limiting ============
 
   /**
-   * Add ORDER BY clause
+   * Add ORDER BY clause (converted to MongoDB sort)
    */
   orderBy(field: string, direction: 'ASC' | 'DESC' = 'ASC'): this {
-    this.orderByClause.push({ field, direction });
+    this.sortSpec[field] = direction === 'ASC' ? 1 : -1;
     return this;
   }
 
   /**
-   * Set LIMIT clause
+   * Set LIMIT clause (converted to MongoDB limit)
    */
   limit(count: number): this {
-    this.limitValue = count;
+    this.limitCount = count;
     return this;
   }
 
   /**
-   * Set OFFSET clause
+   * Set OFFSET clause (converted to MongoDB skip)
    */
   offset(count: number): this {
-    this.offsetValue = count;
+    this.skipCount = count;
     return this;
   }
 
   // ============ Execution Methods ============
 
   /**
+   * Combine all filter conditions into a single MongoDB filter object
+   */
+  private getCombinedFilter(): Filter<T> {
+    if (this.filters.length === 0) {
+      return {};
+    }
+
+    if (this.filters.length === 1) {
+      return this.filters[0];
+    }
+
+    // Combine multiple filters with $and
+    return { $and: this.filters } as Filter<T>;
+  }
+
+  /**
    * Execute query and return first result or null
    */
-  first(): T | null {
-    const query = this.buildParameterizedSelectQuery();
-    const result = this.db.get<T>(query);
-    return result ?? null;
+  async first(): Promise<T | null> {
+    const filter = this.getCombinedFilter();
+    const result = await this.collection.findOne(filter, {
+      sort: this.sortSpec,
+    });
+    return result;
   }
 
   /**
    * Execute query and return all results
    */
-  all(): T[] {
-    const query = this.buildParameterizedSelectQuery();
-    const results = this.db.all<T>(query);
-    return results ?? [];
+  async all(): Promise<T[]> {
+    const filter = this.getCombinedFilter();
+    let cursor = this.collection.find(filter);
+
+    // Apply sorting if specified
+    if (Object.keys(this.sortSpec).length > 0) {
+      cursor = cursor.sort(this.sortSpec);
+    }
+
+    // Apply skip (OFFSET)
+    if (this.skipCount !== undefined) {
+      cursor = cursor.skip(this.skipCount);
+    }
+
+    // Apply limit
+    if (this.limitCount !== undefined) {
+      cursor = cursor.limit(this.limitCount);
+    }
+
+    return await cursor.toArray();
   }
 
   /**
    * Execute query and return count of results
    */
-  count(): number {
-    const whereClause = this.buildParameterizedWhereClause();
-    const query = sql`SELECT COUNT(*) as count FROM ${sql.raw(this.tableName)}${whereClause}`;
-    const result = this.db.get<{ count: number }>(query);
-    return result?.count ?? 0;
+  async count(): Promise<number> {
+    const filter = this.getCombinedFilter();
+    return await this.collection.countDocuments(filter);
   }
 
   // ============ Mutation Methods ============
 
   /**
-   * Set data for INSERT operation
+   * Set data for INSERT operation (not used - use repository.create() instead)
    */
   insert(data: Partial<T>): this {
-    this.insertData = data as Record<string, unknown>;
-    return this;
+    // MongoDB doesn't use query builder for insert
+    // This method exists for interface compatibility but shouldn't be used
+    throw new Error("Use repository.create() instead of query().insert()");
   }
 
   /**
    * Set data for UPDATE operation
    */
   update(data: Partial<T>): this {
-    this.updateData = data as Record<string, unknown>;
+    this.updateDoc = { $set: data } as UpdateFilter<T>;
     return this;
   }
 
@@ -130,147 +202,34 @@ export class QueryBuilder<T = unknown> implements IQueryBuilder<T> {
    * Mark as DELETE operation
    */
   delete(): this {
-    this.isDeleteQuery = true;
+    this.deleteFlag = true;
     return this;
   }
 
   /**
-   * Execute mutation (INSERT, UPDATE, or DELETE)
+   * Execute mutation (UPDATE or DELETE)
    */
-  execute(): void {
-    if (this.insertData) {
-      this.executeInsert();
-    } else if (this.updateData) {
-      this.executeUpdate();
-    } else if (this.isDeleteQuery) {
-      this.executeDelete();
+  async execute(): Promise<void> {
+    const filter = this.getCombinedFilter();
+
+    if (this.deleteFlag) {
+      await this.collection.deleteMany(filter);
+    } else if (this.updateDoc) {
+      await this.collection.updateMany(filter, this.updateDoc);
     }
-  }
-
-  // ============ Internal Query Building ============
-
-  /**
-   * Build parameterized WHERE clause using Drizzle's sql template
-   * CRITICAL SECURITY: Uses Drizzle's parameter binding instead of string interpolation
-   */
-  private buildParameterizedWhereClause() {
-    if (this.whereConditions.length === 0) {
-      return sql.raw('');
-    }
-
-    let result = sql.raw(' WHERE ');
-
-    for (let i = 0; i < this.whereConditions.length; i++) {
-      const condition = this.whereConditions[i];
-      const conjunction = i === 0 ? sql.raw('') : sql.raw(` ${condition.conjunction ?? 'AND'} `);
-
-      if (condition.operator === 'IN' || condition.operator === 'NOT IN') {
-        // Handle IN operator with array of values
-        const values = Array.isArray(condition.value) ? condition.value : [condition.value];
-        result = sql`${result}${conjunction}${sql.raw(condition.field)} ${sql.raw(condition.operator)} (${sql.join(values.map(v => sql`${v}`), sql.raw(', '))})`;
-      } else if (condition.operator === 'IS' || condition.operator === 'IS NOT') {
-        // Handle IS NULL / IS NOT NULL
-        result = sql`${result}${conjunction}${sql.raw(condition.field)} ${sql.raw(condition.operator)} NULL`;
-      } else {
-        // Standard operators with single value
-        result = sql`${result}${conjunction}${sql.raw(condition.field)} ${sql.raw(condition.operator)} ${condition.value}`;
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Build ORDER BY clause
-   */
-  private buildOrderByClause(): string {
-    if (this.orderByClause.length === 0) return '';
-
-    const clauses = this.orderByClause.map(o => `${o.field} ${o.direction}`).join(', ');
-    return ` ORDER BY ${clauses}`;
-  }
-
-  /**
-   * Build complete parameterized SELECT query
-   */
-  private buildParameterizedSelectQuery() {
-    const whereClause = this.buildParameterizedWhereClause();
-    const orderClause = this.buildOrderByClause();
-    const limitClause = this.limitValue ? sql.raw(` LIMIT ${this.limitValue}`) : sql.raw('');
-    const offsetClause = this.offsetValue ? sql.raw(` OFFSET ${this.offsetValue}`) : sql.raw('');
-
-    const columns = this.selectColumns.join(', ');
-    return sql`SELECT ${sql.raw(columns)} FROM ${sql.raw(this.tableName)}${whereClause}${sql.raw(orderClause)}${limitClause}${offsetClause}`;
-  }
-
-  /**
-   * Execute INSERT operation
-   */
-  private executeInsert(): void {
-    if (!this.insertData) return;
-
-    const fields = Object.keys(this.insertData);
-    const values = Object.values(this.insertData);
-
-    // Build parameterized INSERT query using Drizzle's sql template
-    let query = sql`INSERT INTO ${sql.raw(this.tableName)} (${sql.raw(fields.join(', '))}) VALUES (`;
-
-    for (let i = 0; i < values.length; i++) {
-      if (i > 0) {
-        query = sql`${query}, ${values[i]}`;
-      } else {
-        query = sql`${query}${values[i]}`;
-      }
-    }
-
-    query = sql`${query})`;
-
-    this.db.run(query);
-  }
-
-  /**
-   * Execute UPDATE operation
-   */
-  private executeUpdate(): void {
-    if (!this.updateData) return;
-
-    const fields = Object.keys(this.updateData);
-    const values = Object.values(this.updateData);
-    const whereClause = this.buildParameterizedWhereClause();
-
-    // Build SET clause with parameterized values
-    let setClause = sql.raw('');
-    for (let i = 0; i < fields.length; i++) {
-      if (i > 0) {
-        setClause = sql`${setClause}, ${sql.raw(fields[i])} = ${values[i]}`;
-      } else {
-        setClause = sql`${sql.raw(fields[i])} = ${values[i]}`;
-      }
-    }
-
-    const query = sql`UPDATE ${sql.raw(this.tableName)} SET ${setClause}${whereClause}`;
-    this.db.run(query);
-  }
-
-  /**
-   * Execute DELETE operation
-   */
-  private executeDelete(): void {
-    const whereClause = this.buildParameterizedWhereClause();
-    const query = sql`DELETE FROM ${sql.raw(this.tableName)}${whereClause}`;
-    this.db.run(query);
   }
 }
 
 /**
- * Factory function to create a new query builder instance
- * @param db Database instance
- * @param tableName Table name (should already include prefix)
- * @returns New QueryBuilder instance
+ * Factory function to create a new MongoDB query builder instance
+ * @param collection MongoDB collection instance
+ * @returns New MongoQueryBuilder instance
  */
-export function createQueryBuilder<T = unknown>(
-  db: BunSQLiteDatabase,
-  tableName: string
-): QueryBuilder<T> {
-  return new QueryBuilder<T>(db, tableName);
+export function createQueryBuilder<T extends Document>(
+  collection: Collection<T>
+): MongoQueryBuilder<T> {
+  return new MongoQueryBuilder<T>(collection);
 }
+
+// Export MongoQueryBuilder as QueryBuilder for backward compatibility
+export { MongoQueryBuilder as QueryBuilder };

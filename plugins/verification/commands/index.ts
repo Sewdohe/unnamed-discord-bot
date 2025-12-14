@@ -171,7 +171,7 @@ async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: Cor
   const repo = createVerificationRepo(ctx, api);
 
   // Check if already verified
-  if (repo.isVerified(user.id, interaction.guildId!)) {
+  if (await repo.isVerified(user.id, interaction.guildId!)) {
     const embed = api.embeds.warning(
       `${user} is already verified!`,
       "Already Verified"
@@ -184,10 +184,10 @@ async function handleVerifyUser(ctx: PluginContext<VerificationConfig>, api: Cor
   }
 
   // Add to database if not exists
-  repo.createRecord(user.id, interaction.guildId!);
+  await repo.createRecord(user.id, interaction.guildId!);
 
   // Mark as verified
-  repo.verify(user.id, interaction.guildId!);
+  await repo.verify(user.id, interaction.guildId!);
 
   // Assign/remove roles
   try {
@@ -258,7 +258,7 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
   const repo = createVerificationRepo(ctx, api);
 
   // Check if verified
-  if (!repo.isVerified(user.id, interaction.guildId!)) {
+  if (!await repo.isVerified(user.id, interaction.guildId!)) {
     const embed = api.embeds.warning(
       `${user} is not verified!`,
       "Not Verified"
@@ -271,7 +271,7 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
   }
 
   // Mark as unverified
-  repo.unverify(user.id, interaction.guildId!);
+  await repo.unverify(user.id, interaction.guildId!);
 
   // Remove/add roles
   try {
@@ -325,7 +325,7 @@ async function handleUnverifyUser(ctx: PluginContext<VerificationConfig>, api: C
 
 async function handleStats(ctx: PluginContext<VerificationConfig>, api: CoreUtilsAPI, interaction: ChatInputCommandInteraction) {
   const repo = createVerificationRepo(ctx, api);
-  const stats = repo.getStats(interaction.guildId!);
+  const stats = await repo.getStats(interaction.guildId!);
 
   const embed = api.embeds.create()
     .setTitle("📊 Verification Statistics")

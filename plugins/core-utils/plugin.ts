@@ -23,10 +23,11 @@ import {
 } from "discord.js";
 import { z } from "zod";
 import type { Plugin, PluginContext, QueryBuilder, SchemaValidator } from "@types";
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import { createQueryBuilder } from "../../src/core/query-builder";
+import type { Collection, Document } from "mongodb";
+import { MongoQueryBuilder } from "../../src/core/query-builder";
 import { BaseRepository } from "../../src/core/repository";
 import { createSchemaValidator, commonSchemas } from "../../src/core/schema";
+import { getDatabase, prefixCollection } from "../../src/core/database";
 
 // ============ Configuration ============
 
@@ -69,25 +70,30 @@ export interface CoreUtilsAPI {
 
 interface DatabaseHelpers {
   /**
-   * Create a query builder for a table (automatically prefixed)
+   * Get a MongoDB collection (automatically prefixed with plugin name)
    * @param ctx Plugin context
-   * @param tableName Table name (will be prefixed with plugin name)
+   * @param collectionName Collection name (will be prefixed with plugin name)
    */
-  createQueryBuilder<T = unknown>(ctx: PluginContext, tableName: string): QueryBuilder<T>;
+  getCollection<T extends Document = any>(ctx: PluginContext, collectionName: string): Collection<T>;
 
   /**
-   * Create a repository instance for a table
+   * Create a query builder for a collection (automatically prefixed)
    * @param ctx Plugin context
-   * @param tableName Table name (will be prefixed)
+   * @param collectionName Collection name (will be prefixed with plugin name)
+   */
+  createQueryBuilder<T extends Document = any>(ctx: PluginContext, collectionName: string): QueryBuilder<T>;
+
+  /**
+   * Create a repository instance for a collection
+   * @param ctx Plugin context
+   * @param collectionName Collection name (will be prefixed)
    * @param RepositoryClass Repository class constructor
-   * @param primaryKey Primary key field name (default: 'id')
    * @param validator Optional Zod schema validator
    */
-  createRepository<T, TCreate = Partial<T>, TUpdate = Partial<T>>(
+  createRepository<T extends Document, TCreate = Partial<T>, TUpdate = Partial<T>>(
     ctx: PluginContext,
-    tableName: string,
-    RepositoryClass: new (db: BunSQLiteDatabase, tableName: string, primaryKey: string, validator?: SchemaValidator<T>) => BaseRepository<T, TCreate, TUpdate>,
-    primaryKey?: string,
+    collectionName: string,
+    RepositoryClass: new (collection: Collection<T>, validator?: SchemaValidator<T>) => BaseRepository<T, TCreate, TUpdate>,
     validator?: SchemaValidator<T>
   ): BaseRepository<T, TCreate, TUpdate>;
 
@@ -366,23 +372,28 @@ const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
 
 function createDatabaseHelpers(): DatabaseHelpers {
   return {
-    createQueryBuilder<T = unknown>(ctx: PluginContext, tableName: string) {
-      const prefixedTable = `${ctx.dbPrefix}${tableName}`;
-      return createQueryBuilder<T>(ctx.db, prefixedTable);
+    getCollection<T extends Document = any>(ctx: PluginContext, collectionName: string): Collection<T> {
+      const db = getDatabase();
+      const fullName = prefixCollection(ctx.dbPrefix.replace(/_$/, ''), collectionName);
+      return db.collection<T>(fullName);
     },
 
-    createRepository<T, TCreate = Partial<T>, TUpdate = Partial<T>>(
+    createQueryBuilder<T extends Document = any>(ctx: PluginContext, collectionName: string): QueryBuilder<T> {
+      const collection = this.getCollection<T>(ctx, collectionName);
+      return new MongoQueryBuilder<T>(collection);
+    },
+
+    createRepository<T extends Document, TCreate = Partial<T>, TUpdate = Partial<T>>(
       ctx: PluginContext,
-      tableName: string,
-      RepositoryClass: new (db: BunSQLiteDatabase, tableName: string, primaryKey: string, validator?: SchemaValidator<T>) => BaseRepository<T, TCreate, TUpdate>,
-      primaryKey: string = 'id',
+      collectionName: string,
+      RepositoryClass: new (collection: Collection<T>, validator?: SchemaValidator<T>) => BaseRepository<T, TCreate, TUpdate>,
       validator?: SchemaValidator<T>
-    ) {
-      const prefixedTable = `${ctx.dbPrefix}${tableName}`;
-      return new RepositoryClass(ctx.db, prefixedTable, primaryKey, validator);
+    ): BaseRepository<T, TCreate, TUpdate> {
+      const collection = this.getCollection<T>(ctx, collectionName);
+      return new RepositoryClass(collection, validator);
     },
 
-    createValidator<T extends z.ZodTypeAny>(schema: T) {
+    createValidator<T extends z.ZodTypeAny>(schema: T): SchemaValidator<z.infer<T>> {
       return createSchemaValidator(schema);
     },
 
