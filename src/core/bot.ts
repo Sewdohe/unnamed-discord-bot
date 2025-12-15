@@ -5,6 +5,8 @@ import {
   Events,
   REST,
   Routes,
+  Message,
+  MessageFlags,
 } from "discord.js";
 import type { Command, PluginContext } from "../types/";
 import { createLogger } from "./logger";
@@ -114,12 +116,17 @@ export class Bot {
 
         const reply = {
           content: "There was an error executing this command!",
-          ephemeral: true,
+          // ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         };
 
         if (interaction.replied || interaction.deferred) {
+          //@ts-ignore
+          //TODO: fix ts ignore
           await interaction.followUp(reply);
         } else {
+          //@ts-ignore
+          //TODO: fix ts ignore
           await interaction.reply(reply);
         }
       }
