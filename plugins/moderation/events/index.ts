@@ -203,8 +203,8 @@ async function takeAutoModAction(
   timeoutDuration: string,
   reason: string,
   caseType: CaseType
-): Promise<number> {
-  let caseId = 0;
+): Promise<string> {
+  let caseId = "";
 
   try {
     // Process each action
@@ -214,7 +214,7 @@ async function takeAutoModAction(
           // Just delete (already done), create case if not already created
           if (!caseId) {
             const botUser = ctx.client.user!;
-            caseId = repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason);
+            caseId = await repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason);
           }
           break;
 
@@ -222,7 +222,7 @@ async function takeAutoModAction(
           // Create case if not already created
           if (!caseId) {
             const botUser = ctx.client.user!;
-            caseId = repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason);
+            caseId = await repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason);
           }
           // Send DM
           try {
@@ -240,7 +240,7 @@ async function takeAutoModAction(
             await member.timeout(duration * 1000, reason);
             if (!caseId) {
               const botUser = ctx.client.user!;
-              caseId = repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason, duration);
+              caseId = await repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason, duration);
             }
           }
           break;
@@ -250,7 +250,7 @@ async function takeAutoModAction(
             await member.kick(reason);
             if (!caseId) {
               const botUser = ctx.client.user!;
-              caseId = repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason);
+              caseId = await repo.createCase(caseType, user.id, user.tag, botUser.id, botUser.tag, reason);
             }
           }
           break;
@@ -259,7 +259,7 @@ async function takeAutoModAction(
 
     // Log to modlog
     if (caseId && ctx.config.modLog.enabled) {
-      const modCase = repo.getCase(caseId);
+      const modCase = await repo.getCase(caseId);
       if (modCase) {
         await logToModLog(ctx, api, caseId, modCase, ctx.config.modLog.channelId);
       }

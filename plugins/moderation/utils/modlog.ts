@@ -8,7 +8,7 @@ import type { ModCase } from "../db/repository";
 export async function logToModLog(
   ctx: PluginContext,
   api: CoreUtilsAPI,
-  caseId: number,
+  caseId: string,
   modCase: ModCase,
   modLogChannelId?: string
 ) {
@@ -42,6 +42,7 @@ export function getCaseColor(type: string): number {
   const colors: Record<string, number> = {
     kick: 0xffa500,         // Orange
     ban: 0xff0000,          // Red
+    tempban: 0xdc143c,      // Crimson (Red for temporary bans)
     unban: 0x00ff00,        // Green
     timeout: 0xffff00,      // Yellow
     warn: 0xffa500,         // Orange

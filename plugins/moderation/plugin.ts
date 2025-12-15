@@ -9,14 +9,17 @@ import {
   unbanCommand,
   timeoutCommand,
   warnCommand,
+  tempbanCommand,
   purgeCommand,
   lockCommand,
   unlockCommand,
   caseCommand,
   historyCommand,
   editCaseCommand,
+  actionlogCommand,
 } from "./commands";
 import { autoModEvent } from "./events";
+import { initTempbanScheduler } from "./utils/tempbans";
 
 // ============ Configuration ============
 
@@ -51,6 +54,27 @@ const configSchema = z.object({
       exemptChannels: z.array(z.string()).default([]).describe("Channel IDs where invites are allowed"),
     }).default({}).describe("Filter unauthorized Discord invite links"),
   }).default({}).describe("Automatic moderation settings"),
+  warnings: z.object({
+    globalThresholds: z.array(z.object({
+      count: z.number().min(1).describe("Number of warnings required"),
+      action: z.enum(["timeout", "kick", "ban"]).describe("Action to take when threshold is reached"),
+      duration: z.string().optional().describe("Duration for timeout action (e.g., 1h, 1d)"),
+    })).default([]).describe("Global warning thresholds that apply to all warnings"),
+    decay: z.object({
+      enabled: z.boolean().default(true).describe("Enable time-based warning decay"),
+      days: z.number().min(1).default(30).describe("Days after which warnings no longer count toward thresholds"),
+    }).default({}).describe("Warning decay settings"),
+    categories: z.array(z.object({
+      id: z.string().describe("Internal category ID (e.g., 'spam', 'toxicity')"),
+      name: z.string().describe("Display name for the category"),
+      thresholds: z.array(z.object({
+        count: z.number().min(1).describe("Number of warnings in this category required"),
+        action: z.enum(["timeout", "kick", "ban"]).describe("Action to take"),
+        duration: z.string().optional().describe("Duration for timeout action"),
+      })).default([]).describe("Category-specific thresholds (override global)"),
+    })).default([]).describe("Warning categories with specific thresholds"),
+    dmOnThresholdAction: z.boolean().default(true).describe("DM users when a threshold action is triggered"),
+  }).default({}).describe("Warning threshold and escalation settings"),
 }).describe("Moderation plugin configuration");
 
 type ModConfig = z.infer<typeof configSchema>;
@@ -105,6 +129,15 @@ const plugin: Plugin<typeof configSchema> = {
           exemptChannels: [],
         },
       },
+      warnings: {
+        globalThresholds: [],
+        decay: {
+          enabled: true,
+          days: 30,
+        },
+        categories: [],
+        dmOnThresholdAction: true,
+      },
     },
   },
 
@@ -129,12 +162,17 @@ const plugin: Plugin<typeof configSchema> = {
     ctx.registerCommand(unbanCommand(ctx, api, moderationRepo));
     ctx.registerCommand(timeoutCommand(ctx, api, moderationRepo));
     ctx.registerCommand(warnCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(tempbanCommand(ctx, api, moderationRepo));
     ctx.registerCommand(purgeCommand(ctx, api, moderationRepo));
     ctx.registerCommand(lockCommand(ctx, api, moderationRepo));
     ctx.registerCommand(unlockCommand(ctx, api, moderationRepo));
     ctx.registerCommand(caseCommand(ctx, api, moderationRepo));
     ctx.registerCommand(historyCommand(ctx, api, moderationRepo));
     ctx.registerCommand(editCaseCommand(ctx, api, moderationRepo));
+    ctx.registerCommand(actionlogCommand(ctx, api, moderationRepo));
+
+    // Initialize tempban scheduler
+    initTempbanScheduler(ctx, api, moderationRepo);
 
     // Register auto-mod event handlers
     if (ctx.config.autoMod.messageFilter.enabled || ctx.config.autoMod.inviteFilter.enabled) {
