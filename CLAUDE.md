@@ -11,7 +11,7 @@ This is a **plugin-based Discord bot framework** built with:
 - **Runtime**: Bun
 - **Language**: TypeScript
 - **Discord Library**: Discord.js v14
-- **Database**: SQLite via Bun's native driver + Drizzle ORM
+- **Database**: MongoDB with native Node.js driver
 - **Configuration**: Zod schemas → auto-generated YAML files
 
 The core framework handles Discord client management, plugin loading, command registration, and database initialization. Plugins extend functionality without modifying core code.
@@ -27,7 +27,7 @@ discord-bot/
 │   │   ├── bot.ts              # Main Bot class, command routing, event setup
 │   │   ├── plugin-loader.ts    # Plugin discovery, dependency resolution, loading
 │   │   ├── config.ts           # Zod→YAML config generation and loading
-│   │   ├── database.ts         # SQLite initialization with Bun's native driver
+│   │   ├── database.ts         # MongoDB connection and initialization
 │   │   ├── logger.ts           # Colored, prefixed console logger
 │   │   └── index.ts            # Barrel exports
 │   ├── types/
@@ -39,7 +39,7 @@ discord-bot/
 │   └── economy/
 │       └── plugin.ts           # Example: database usage, multiple commands
 ├── config/                     # Auto-generated YAML configs (one per plugin)
-├── data/                       # SQLite database (bot.db)
+├── data/                       # Data directory (not used with MongoDB)
 ├── docs/
 │   └── PLUGIN_DEVELOPMENT.md   # Plugin development guide
 ├── .env                        # DISCORD_TOKEN, CLIENT_ID, GUILD_ID
@@ -83,8 +83,8 @@ interface PluginContext<TConfig = Record<string, unknown>> {
   client: Client;                    // Discord.js client
   logger: Logger;                    // Prefixed logger
   config: TConfig;                   // Validated config from YAML
-  db: BunSQLiteDatabase;             // Drizzle database instance
-  dbPrefix: string;                  // Table prefix (e.g., "economy_")
+  db: Db;                            // MongoDB database instance
+  dbPrefix: string;                  // Collection prefix (e.g., "economy_")
   registerCommand(command: Command): void;
   registerEvent<K extends keyof ClientEvents>(event: Event<K>): void;
   getPlugin<T = unknown>(name: string): T | undefined;
@@ -134,8 +134,9 @@ Configuration management:
 ### `src/core/database.ts`
 
 Database setup:
-- `initDatabase()`: Creates SQLite database with WAL mode
-- `prefixTable()`: Generates table prefix from plugin name
+- `initDatabase()`: Connects to MongoDB with connection pooling
+- `getDatabase()`: Returns MongoDB Db instance
+- `prefixCollection()`: Generates collection prefix from plugin name
 
 ---
 
@@ -213,48 +214,46 @@ const plugin: Plugin<typeof configSchema> = {
 export default plugin;
 ```
 
-### Adding Database Tables
+### Using MongoDB Collections
 
 ```typescript
-import { sql } from "drizzle-orm";
+import { Collection } from "mongodb";
 
 async onLoad(ctx) {
-  const tableName = `${ctx.dbPrefix}my_table`;
+  // Get or create collection (MongoDB creates collections automatically)
+  const collection = ctx.db.collection(`${ctx.dbPrefix}my_collection`);
 
-  ctx.db.run(sql.raw(`
-    CREATE TABLE IF NOT EXISTS ${tableName} (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id TEXT NOT NULL,
-      data TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `));
+  // Create indexes for performance
+  await collection.createIndex({ user_id: 1 }).catch(() => {});
 }
 ```
 
 ### Database Queries
 
 ```typescript
-import { sql } from "drizzle-orm";
+import type { Collection, Document, ObjectId } from "mongodb";
 
-// Get one row
-const row = ctx.db.get<{ id: number; data: string }>(
-  sql.raw(`SELECT * FROM ${tableName} WHERE id = ${id}`)
-);
+// Get one document
+const doc = await collection.findOne({ _id: new ObjectId(id) });
 
-// Get multiple rows
-const rows = ctx.db.all<{ id: number; data: string }>(
-  sql.raw(`SELECT * FROM ${tableName} WHERE user_id = '${userId}'`)
-);
+// Get multiple documents
+const docs = await collection.find({ user_id: userId }).toArray();
 
 // Insert
-ctx.db.run(sql.raw(`INSERT INTO ${tableName} (user_id, data) VALUES ('${userId}', '${data}')`));
+await collection.insertOne({
+  user_id: userId,
+  data: data,
+  created_at: new Date()
+});
 
 // Update
-ctx.db.run(sql.raw(`UPDATE ${tableName} SET data = '${newData}' WHERE id = ${id}`));
+await collection.updateOne(
+  { _id: new ObjectId(id) },
+  { $set: { data: newData } }
+);
 
 // Delete
-ctx.db.run(sql.raw(`DELETE FROM ${tableName} WHERE id = ${id}`));
+await collection.deleteOne({ _id: new ObjectId(id) });
 ```
 
 ### Adding Commands with Options
@@ -341,7 +340,7 @@ ctx.registerEvent({
 
 // One-time event
 ctx.registerEvent({
-  name: "ready",
+  name: "clientReady",
   once: true,
   async execute(ctx, client) {
     ctx.logger.info(`Bot ready as ${client.user.tag}`);
@@ -424,8 +423,8 @@ await interaction.reply({ embeds: [embed] });
 // Discord.js
 import { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } from "discord.js";
 
-// Drizzle (for database)
-import { sql } from "drizzle-orm";
+// MongoDB (for database)
+import type { Collection, Document, ObjectId } from "mongodb";
 
 // Zod (for config schemas)
 import { z } from "zod";
@@ -439,7 +438,7 @@ import type { Plugin, PluginContext, Command, Event } from "@types";
 ```typescript
 // 1. Imports
 import { SlashCommandBuilder } from "discord.js";
-import { sql } from "drizzle-orm";
+import type { Collection, Document, ObjectId } from "mongodb";
 import { z } from "zod";
 import type { Plugin, PluginContext, Command } from "@types";
 
@@ -491,17 +490,17 @@ async execute(interaction) {
 
 ## Database Patterns
 
-**IMPORTANT:** The framework provides a database abstraction layer that prevents SQL injection and provides type safety. **Always use this abstraction instead of writing raw SQL.**
+**IMPORTANT:** The framework provides a MongoDB abstraction layer that provides type safety and prevents common database issues. **Always use this abstraction instead of writing raw MongoDB queries.**
 
 ### Database Abstraction Architecture
 
 The database layer consists of:
-1. **Query Builder** (`src/core/query-builder.ts`) - Safe, parameterized SQL query construction
-2. **Base Repository** (`src/core/repository.ts`) - CRUD operations with type safety
+1. **Query Builder** (`src/core/query-builder.ts`) - SQL-like query API that converts to MongoDB filter objects
+2. **Base Repository** (`src/core/repository.ts`) - Async CRUD operations with type safety
 3. **Schema Validation** (`src/core/schema.ts`) - Runtime validation with Zod
-4. **Database API** (via `core-utils`) - Factory methods for creating repositories
+4. **Database API** (via `core-utils`) - Factory methods for creating repositories and collections
 
-All SQL queries use Drizzle's `sql` template tag for parameter binding, preventing SQL injection.
+All MongoDB queries use parameterized filter objects, preventing injection attacks.
 
 ### Repository Pattern (Recommended)
 
@@ -509,40 +508,41 @@ All SQL queries use Drizzle's `sql` template tag for parameter binding, preventi
 
 ```typescript
 // db/repository.ts
+import { Collection, Document, ObjectId, OptionalId } from "mongodb";
 import { BaseRepository } from "../../../src/core/repository";
 import type { PluginContext } from "@types";
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import type { CoreUtilsAPI } from "../../core-utils/plugin";
-import { sql } from "drizzle-orm";
 
-export interface User {
-  id: number;
+export interface User extends Document {
+  _id?: ObjectId;
   discord_id: string;
   balance: number;
-  created_at: string;
+  created_at: Date;
 }
 
 export class UserRepository extends BaseRepository<User> {
-  constructor(db: BunSQLiteDatabase, tableName: string) {
-    super(db, tableName, 'id');
+  constructor(collection: Collection<User>) {
+    super(collection);
   }
 
-  findByDiscordId(discordId: string): User | null {
-    return this.query()
+  async findByDiscordId(discordId: string): Promise<User | null> {
+    return await this.query()
       .where('discord_id', '=', discordId)
       .first();
   }
 
-  createUser(discordId: string, initialBalance: number = 0): number {
-    // Parameterized query - safe from SQL injection
-    const query = sql`INSERT INTO ${sql.raw(this.tableName)} (discord_id, balance) VALUES (${discordId}, ${initialBalance})`;
-    this.db.run(query);
-    const result = this.db.get<{ id: number }>(sql.raw('SELECT last_insert_rowid() as id'));
-    return result?.id ?? 0;
+  async createUser(discordId: string, initialBalance: number = 0): Promise<string> {
+    const result = await this.collection.insertOne({
+      discord_id: discordId,
+      balance: initialBalance,
+      created_at: new Date(),
+    } as OptionalId<User>);
+
+    return result.insertedId.toString();
   }
 
-  getTopUsers(limit: number = 10): User[] {
-    return this.query()
+  async getTopUsers(limit: number = 10): Promise<User[]> {
+    return await this.query()
       .orderBy('balance', 'DESC')
       .limit(limit)
       .all();
@@ -554,19 +554,18 @@ export class UserRepository extends BaseRepository<User> {
 
 ```typescript
 export function createUserRepo(ctx: PluginContext, api: CoreUtilsAPI): UserRepository {
-  return api.database.createRepository(ctx, 'users', UserRepository) as UserRepository;
+  const collection = api.database.getCollection<User>(ctx, 'users');
+
+  // Create indexes for performance
+  collection.createIndex({ discord_id: 1 }, { unique: true }).catch(() => {});
+  collection.createIndex({ balance: -1 }).catch(() => {});
+
+  return new UserRepository(collection);
 }
 
 export async function initDatabase(ctx: PluginContext): Promise<void> {
-  const table = `${ctx.dbPrefix}users`;
-  ctx.db.run(sql.raw(`
-    CREATE TABLE IF NOT EXISTS ${table} (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      discord_id TEXT NOT NULL UNIQUE,
-      balance INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `));
+  // MongoDB collections are auto-created, no initialization needed
+  ctx.logger.debug("MongoDB auto-creates collections - no initialization needed");
 }
 ```
 
@@ -588,10 +587,10 @@ async onLoad(ctx) {
       .setDescription("Check your balance"),
 
     async execute(interaction) {
-      let user = userRepo.findByDiscordId(interaction.user.id);
+      let user = await userRepo.findByDiscordId(interaction.user.id);
       if (!user) {
-        const id = userRepo.createUser(interaction.user.id, 100);
-        user = userRepo.find(id)!;
+        const id = await userRepo.createUser(interaction.user.id, 100);
+        user = await userRepo.find(id)!;
       }
       await interaction.reply(`Your balance: ${user.balance} coins`);
     },
@@ -601,46 +600,46 @@ async onLoad(ctx) {
 
 ### Query Builder Usage
 
-The query builder provides method chaining for safe SQL queries:
+The query builder provides method chaining for safe MongoDB queries (all methods return Promises):
 
 ```typescript
 // Basic queries
-const user = userRepo.query()
+const user = await userRepo.query()
   .where('discord_id', '=', userId)
   .first();
 
 // Multiple conditions (AND)
-const activeUsers = userRepo.query()
+const activeUsers = await userRepo.query()
   .where('balance', '>', 0)
-  .where('created_at', '>', '2025-01-01')
+  .where('created_at', '>', new Date('2025-01-01'))
   .all();
 
 // OR conditions
-const users = userRepo.query()
+const users = await userRepo.query()
   .where('balance', '>', 1000)
   .whereOr('level', '>', 50)
   .all();
 
 // Ordering and limiting
-const topUsers = userRepo.query()
+const topUsers = await userRepo.query()
   .orderBy('balance', 'DESC')
   .limit(10)
   .all();
 
 // Updates
-userRepo.query()
+await userRepo.query()
   .where('discord_id', '=', userId)
   .update({ balance: 500 })
   .execute();
 
 // Deletes
-userRepo.query()
+await userRepo.query()
   .where('balance', '<', 0)
   .delete()
   .execute();
 
 // Counting
-const count = userRepo.query()
+const count = await userRepo.query()
   .where('balance', '>', 0)
   .count();
 ```
@@ -649,71 +648,79 @@ const count = userRepo.query()
 
 ### Base Repository Methods
 
-All repositories have these built-in methods:
+All repositories have these built-in async methods:
 
 ```typescript
-// Find by primary key
-const user = userRepo.find(userId);
+// Find by primary key (MongoDB ObjectId or string)
+const user = await userRepo.find(userId);
 
-// Create new record
-const id = userRepo.create({ discord_id: '123', balance: 100 });
+// Create new record (returns string ID)
+const id = await userRepo.create({ discord_id: '123', balance: 100, created_at: new Date() });
 
 // Update existing record
-const success = userRepo.update(userId, { balance: 200 });
+const success = await userRepo.update(userId, { balance: 200 });
 
 // Delete record
-const deleted = userRepo.delete(userId);
+const deleted = await userRepo.delete(userId);
 
 // Get all records
-const allUsers = userRepo.all();
+const allUsers = await userRepo.all();
 
-// Get query builder
+// Get query builder (still chainable, but execute with await)
 const query = userRepo.query();
 ```
 
-### SQL Injection Prevention
+### MongoDB Injection Prevention
 
-**✅ SAFE - Parameterized queries:**
+**✅ SAFE - Query builder and filter objects:**
 ```typescript
 // Query builder (always safe)
-userRepo.query().where('discord_id', '=', userId).first();
+await userRepo.query().where('discord_id', '=', userId).first();
 
-// Direct parameterized query
-const query = sql`SELECT * FROM ${sql.raw(table)} WHERE discord_id = ${userId}`;
-ctx.db.get<User>(query);
+// Direct MongoDB filter (safe with proper objects)
+await collection.findOne({ discord_id: userId });
 ```
 
-**❌ UNSAFE - String interpolation (NEVER DO THIS):**
+**❌ UNSAFE - Building queries from strings (NEVER DO THIS):**
 ```typescript
-// SQL injection vulnerability!
-ctx.db.get(sql.raw(`SELECT * FROM ${table} WHERE discord_id = '${userId}'`));
+// MongoDB injection vulnerability!
+await collection.findOne({ discord_id: eval(userId) });
+await collection.find({ $where: userInput }); // Never use $where with user input
 ```
 
-The query builder uses Drizzle's `sql` template tag for automatic parameter binding.
+The query builder converts SQL-like syntax to MongoDB filter objects automatically.
 
 ### Common Patterns
 
 **Upsert:**
 ```typescript
-// INSERT OR IGNORE
-const query = sql`INSERT OR IGNORE INTO ${sql.raw(this.tableName)} (discord_id, balance) VALUES (${discordId}, ${balance})`;
-this.db.run(query);
+// Insert if not exists (using $setOnInsert)
+await collection.updateOne(
+  { discord_id: discordId },
+  {
+    $setOnInsert: { discord_id: discordId, balance: 100, created_at: new Date() }
+  },
+  { upsert: true }
+);
 
-// INSERT OR REPLACE
-const query = sql`INSERT OR REPLACE INTO ${sql.raw(this.tableName)} (discord_id, balance) VALUES (${discordId}, ${balance})`;
-this.db.run(query);
+// Update or insert (replace entire document)
+await collection.replaceOne(
+  { discord_id: discordId },
+  { discord_id: discordId, balance: balance, created_at: new Date() },
+  { upsert: true }
+);
 ```
 
-**Transactions:**
+**Transactions (MongoDB sessions):**
 ```typescript
-ctx.db.run(sql.raw('BEGIN TRANSACTION'));
+const session = ctx.db.client.startSession();
 try {
-  userRepo.update(userId1, { balance: balance1 - amount });
-  userRepo.update(userId2, { balance: balance2 + amount });
-  ctx.db.run(sql.raw('COMMIT'));
-} catch (error) {
-  ctx.db.run(sql.raw('ROLLBACK'));
-  throw error;
+  await session.withTransaction(async () => {
+    await userRepo.update(userId1, { balance: balance1 - amount });
+    await userRepo.update(userId2, { balance: balance2 + amount });
+  });
+} finally {
+  await session.endSession();
 }
 ```
 
@@ -722,28 +729,30 @@ try {
 const page = 0;
 const pageSize = 10;
 
-const users = userRepo.query()
+const users = await userRepo.query()
   .orderBy('balance', 'DESC')
   .limit(pageSize)
   .offset(page * pageSize)
   .all();
 ```
 
-### Drizzle's sql API Reference
+### MongoDB Best Practices
 
-**Critical for security:**
-- `sql.raw(string)` - For table/column names (unsafe for user input)
-- `sql`template ${value}` ` - For parameterized values (safe)
-- `sql.join()` - For arrays in IN clauses
+**Working with Dates:**
+- Always use `Date` objects, not strings
+- MongoDB stores dates as BSON Date type
+- Example: `created_at: new Date()` not `created_at: new Date().toISOString()`
 
-**Example:**
-```typescript
-// CORRECT - Parameterized query
-const query = sql`SELECT * FROM ${sql.raw(tableName)} WHERE id = ${userId}`;
+**Working with IDs:**
+- MongoDB uses `ObjectId` for `_id` field
+- Convert to string when returning to client: `result.insertedId.toString()`
+- Accept both string and ObjectId in queries: `typeof id === 'string' ? new ObjectId(id) : id`
 
-// WRONG - SQL injection vulnerable
-const query = sql.raw(`SELECT * FROM ${tableName} WHERE id = '${userId}'`);
-```
+**Indexes:**
+- Create indexes in factory function: `collection.createIndex({ field: 1 })`
+- Use `.catch(() => {})` to prevent errors if index already exists
+- Ascending: `1`, Descending: `-1`
+- Unique: `{ unique: true }`
 
 ---
 
@@ -988,9 +997,10 @@ ctx.logger.debug("Debug message"); // Only with DEBUG=true
 
 ```typescript
 import { SlashCommandBuilder, EmbedBuilder } from "discord.js";
-import { sql } from "drizzle-orm";
+import type { Collection, Document, ObjectId } from "mongodb";
 import { z } from "zod";
 import type { Plugin, PluginContext, Command, Event } from "@types";
+import type { CoreUtilsAPI } from "../core-utils/plugin";
 
 // ============ Configuration ============
 
@@ -1003,11 +1013,11 @@ type PluginConfig = z.infer<typeof configSchema>;
 
 // ============ Database Types ============
 
-interface DbItem {
-  id: number;
+interface DbItem extends Document {
+  _id?: ObjectId;
   user_id: string;
   name: string;
-  created_at: string;
+  created_at: Date;
 }
 
 // ============ Plugin Definition ============
@@ -1038,12 +1048,23 @@ const plugin: Plugin<typeof configSchema> = {
       return;
     }
 
-    // Initialize database
-    await initDatabase(ctx);
+    // Get core-utils API
+    const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
+    if (!coreUtils?.api) {
+      ctx.logger.error("core-utils plugin required");
+      return;
+    }
+    const api = coreUtils.api;
+
+    // Get MongoDB collection
+    const collection = api.database.getCollection<DbItem>(ctx, 'items');
+
+    // Create index for performance
+    collection.createIndex({ user_id: 1 }).catch(() => {});
 
     // Register commands
-    ctx.registerCommand(listCommand(ctx));
-    ctx.registerCommand(addCommand(ctx));
+    ctx.registerCommand(listCommand(ctx, collection));
+    ctx.registerCommand(addCommand(ctx, collection));
 
     // Register events
     ctx.registerEvent(readyEvent(ctx));
@@ -1058,43 +1079,30 @@ const plugin: Plugin<typeof configSchema> = {
 
 // ============ Database ============
 
-async function initDatabase(ctx: PluginContext<PluginConfig>) {
-  const table = `${ctx.dbPrefix}items`;
-
-  ctx.db.run(sql.raw(`
-    CREATE TABLE IF NOT EXISTS ${table} (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `));
-
-  ctx.logger.debug(`Initialized table: ${table}`);
+async function getItems(collection: Collection<DbItem>, userId: string): Promise<DbItem[]> {
+  return await collection.find({ user_id: userId })
+    .sort({ created_at: -1 })
+    .toArray();
 }
 
-function getItems(ctx: PluginContext<PluginConfig>, userId: string): DbItem[] {
-  const table = `${ctx.dbPrefix}items`;
-  return ctx.db.all<DbItem>(
-    sql.raw(`SELECT * FROM ${table} WHERE user_id = '${userId}' ORDER BY created_at DESC`)
-  ) ?? [];
-}
-
-function addItem(ctx: PluginContext<PluginConfig>, userId: string, name: string): void {
-  const table = `${ctx.dbPrefix}items`;
-  ctx.db.run(sql.raw(`INSERT INTO ${table} (user_id, name) VALUES ('${userId}', '${name}')`));
+async function addItem(collection: Collection<DbItem>, userId: string, name: string): Promise<void> {
+  await collection.insertOne({
+    user_id: userId,
+    name,
+    created_at: new Date(),
+  });
 }
 
 // ============ Commands ============
 
-function listCommand(ctx: PluginContext<PluginConfig>): Command {
+function listCommand(ctx: PluginContext<PluginConfig>, collection: Collection<DbItem>): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("template-list")
       .setDescription("List your items"),
 
     async execute(interaction) {
-      const items = getItems(ctx, interaction.user.id);
+      const items = await getItems(collection, interaction.user.id);
 
       if (items.length === 0) {
         await interaction.reply({
@@ -1114,7 +1122,7 @@ function listCommand(ctx: PluginContext<PluginConfig>): Command {
   };
 }
 
-function addCommand(ctx: PluginContext<PluginConfig>): Command {
+function addCommand(ctx: PluginContext<PluginConfig>, collection: Collection<DbItem>): Command {
   return {
     data: new SlashCommandBuilder()
       .setName("template-add")
@@ -1125,7 +1133,7 @@ function addCommand(ctx: PluginContext<PluginConfig>): Command {
 
     async execute(interaction) {
       const name = interaction.options.getString("name", true);
-      const items = getItems(ctx, interaction.user.id);
+      const items = await getItems(collection, interaction.user.id);
 
       if (items.length >= ctx.config.maxItems) {
         await interaction.reply({
@@ -1135,7 +1143,7 @@ function addCommand(ctx: PluginContext<PluginConfig>): Command {
         return;
       }
 
-      addItem(ctx, interaction.user.id, name);
+      await addItem(collection, interaction.user.id, name);
       await interaction.reply(`Added item: ${name}`);
     },
   };
@@ -1145,7 +1153,7 @@ function addCommand(ctx: PluginContext<PluginConfig>): Command {
 
 function readyEvent(ctx: PluginContext<PluginConfig>): Event<"ready"> {
   return {
-    name: "ready",
+    name: "clientReady",
     once: true,
     async execute(ctx, client) {
       ctx.logger.info(`Template plugin ready on ${client.guilds.cache.size} guilds`);
@@ -1170,7 +1178,7 @@ export default plugin;
 
 4. **Discord.js v14 uses `withResponse` not `fetchReply`** - For getting the reply message
 
-5. **Bun's native SQLite** - No need for better-sqlite3, use `bun:sqlite` via drizzle-orm/bun-sqlite
+5. **MongoDB with async/await** - All database operations return Promises, always use `await`
 
 6. **Config files are YAML** - Generated in `config/` directory, one per plugin
 

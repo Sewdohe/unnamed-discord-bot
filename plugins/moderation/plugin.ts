@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Plugin, PluginContext } from "@types";
 import type { CoreUtilsAPI } from "../core-utils/plugin";
+import type { StatisticsAPI } from "../statistics/plugin";
 import { initDatabase, createModerationRepo } from "./db/repository";
 import {
   kickCommand,
@@ -68,6 +69,7 @@ const plugin: Plugin<typeof configSchema> = {
     },
     dependencies: {
       hard: ["core-utils"],
+      soft: ["statistics"],
     },
   },
 
@@ -137,6 +139,41 @@ const plugin: Plugin<typeof configSchema> = {
     // Register auto-mod event handlers
     if (ctx.config.autoMod.messageFilter.enabled || ctx.config.autoMod.inviteFilter.enabled) {
       ctx.registerEvent(autoModEvent(ctx, api, moderationRepo));
+    }
+
+    // Register statistics provider
+    const statisticsPlugin = ctx.getPlugin<{ api: StatisticsAPI }>("statistics");
+    if (statisticsPlugin?.api) {
+      statisticsPlugin.api.registerProvider({
+        id: "moderation-stats",
+        category: "Moderation Statistics",
+        priority: 80,
+        collect: async () => {
+          // Get total cases
+          const allCases = await moderationRepo.all();
+          const totalCases = allCases.length;
+
+          // Count by type
+          const bans = allCases.filter(c => c.type === "ban").length;
+          const kicks = allCases.filter(c => c.type === "kick").length;
+          const warns = allCases.filter(c => c.type === "warn").length;
+          const timeouts = allCases.filter(c => c.type === "timeout").length;
+
+          // Count recent activity (last 24 hours)
+          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+          const recentCases = allCases.filter(c => c.created_at >= oneDayAgo).length;
+
+          return {
+            "Total Cases": totalCases.toLocaleString(),
+            "Bans": bans.toLocaleString(),
+            "Kicks": kicks.toLocaleString(),
+            "Warnings": warns.toLocaleString(),
+            "Timeouts": timeouts.toLocaleString(),
+            "Cases (24h)": recentCases.toLocaleString(),
+          };
+        },
+      });
+      ctx.logger.info("Registered moderation statistics provider");
     }
 
     ctx.logger.info("Moderation plugin loaded!");

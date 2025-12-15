@@ -27,7 +27,7 @@ discord-bot/
 │   │   ├── bot.ts      # Main bot class
 │   │   ├── plugin-loader.ts  # Plugin discovery & loading
 │   │   ├── config.ts   # YAML config management
-│   │   ├── database.ts # SQLite/Drizzle setup
+│   │   ├── database.ts # MongoDB setup
 │   │   └── logger.ts   # Logging utility
 │   ├── types/          # TypeScript definitions
 │   └── index.ts        # Entry point
@@ -37,7 +37,7 @@ discord-bot/
 │   └── economy/
 │       └── plugin.ts
 ├── config/             # Auto-generated YAML configs (per plugin)
-└── data/               # SQLite database
+└── data/               # MongoDB data
 ```
 
 ## Creating a Plugin
@@ -122,25 +122,29 @@ Every plugin receives a context object with:
 | `client` | Discord.js Client instance |
 | `logger` | Prefixed logger (`info`, `warn`, `error`, `debug`) |
 | `config` | Parsed & validated config from YAML |
-| `db` | Drizzle database instance |
-| `dbPrefix` | Table prefix for this plugin (e.g., `economy_`) |
+| `db` | MongoDB database instance |
+| `dbPrefix` | Collection prefix for this plugin (e.g., `economy_`) |
 | `registerCommand(cmd)` | Register a slash command |
 | `registerEvent(event)` | Register an event handler |
 | `getPlugin(name)` | Get another loaded plugin for cross-plugin communication |
 
 ## Database Usage
 
-Each plugin should prefix its tables using `ctx.dbPrefix`:
+Plugins use MongoDB for data storage. Get the core-utils API to access database helpers:
 
 ```ts
-const tableName = `${ctx.dbPrefix}my_table`;
+const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
+const api = coreUtils?.api;
 
-ctx.db.run(sql.raw(`
-  CREATE TABLE IF NOT EXISTS ${tableName} (
-    id INTEGER PRIMARY KEY,
-    data TEXT
-  )
-`));
+// Get a MongoDB collection (automatically created)
+const collection = api.database.getCollection<MyType>(ctx, 'my_collection');
+
+// Create indexes for performance
+collection.createIndex({ user_id: 1 }, { unique: true }).catch(() => {});
+
+// Use the collection
+const items = await collection.find({ user_id: userId }).toArray();
+await collection.insertOne({ user_id: userId, data: "value" });
 ```
 
 ## Configuration

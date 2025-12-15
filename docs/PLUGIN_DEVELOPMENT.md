@@ -598,7 +598,7 @@ ctx.registerEvent({
 
 ```typescript
 ctx.registerEvent({
-  name: "ready",
+  name: "clientReady",
   once: true, // Only fires once
   async execute(ctx, client) {
     ctx.logger.info(`Bot ready as ${client.user.tag}`);
@@ -695,11 +695,11 @@ Users can edit these files to configure your plugin. Changes require bot restart
 
 ## Database
 
-The framework provides a powerful database abstraction layer that eliminates SQL injection vulnerabilities, provides type safety, and simplifies common database operations. **Always use this abstraction instead of writing raw SQL.**
+The framework uses MongoDB for data storage, providing a flexible, document-based approach that works naturally with JavaScript objects. **Always use the repository pattern and query builder for type safety and injection prevention.**
 
 ### Database API (via core-utils)
 
-The core-utils plugin provides a database helper API that makes working with databases safe and easy:
+The core-utils plugin provides a database helper API that makes working with MongoDB safe and easy:
 
 ```typescript
 import type { CoreUtilsAPI } from "../core-utils/plugin";
@@ -708,8 +708,9 @@ const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
 const api = coreUtils.api;
 
 // api.database provides:
-// - createQueryBuilder<T>(ctx, tableName) - Build safe SQL queries
-// - createRepository(ctx, tableName, RepoClass, primaryKey?, validator?) - Create repository instances
+// - getCollection<T>(ctx, collectionName) - Get a MongoDB collection
+// - createQueryBuilder<T>(ctx, collectionName) - Build safe MongoDB queries
+// - createRepository(ctx, collectionName, RepoClass, validator?) - Create repository instances
 // - createValidator(schema) - Create Zod validators
 // - schemas - Common Zod schemas (discordId, timestamp, boolean)
 ```
@@ -722,17 +723,16 @@ The repository pattern provides a clean, type-safe interface for database operat
 
 ```typescript
 // db/repository.ts
+import { Collection, Document, ObjectId, OptionalId } from "mongodb";
 import { BaseRepository } from "../../../src/core/repository";
 import type { PluginContext } from "@types";
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import type { CoreUtilsAPI } from "../../core-utils/plugin";
-import { sql } from "drizzle-orm";
 
-export interface User {
-  id: number;
+export interface User extends Document {
+  _id?: ObjectId;
   discord_id: string;
   balance: number;
-  created_at: string;
+  created_at: Date;
 }
 ```
 
@@ -740,15 +740,15 @@ export interface User {
 
 ```typescript
 export class UserRepository extends BaseRepository<User> {
-  constructor(db: BunSQLiteDatabase, tableName: string) {
-    super(db, tableName, 'id'); // 'id' is the primary key
+  constructor(collection: Collection<User>) {
+    super(collection);
   }
 
   /**
    * Get user by Discord ID
    */
-  findByDiscordId(discordId: string): User | null {
-    return this.query()
+  async findByDiscordId(discordId: string): Promise<User | null> {
+    return await this.query()
       .where('discord_id', '=', discordId)
       .first();
   }
@@ -756,27 +756,28 @@ export class UserRepository extends BaseRepository<User> {
   /**
    * Create a new user
    */
-  createUser(discordId: string, initialBalance: number = 0): number {
-    // Using parameterized query (safe from SQL injection)
-    const query = sql`INSERT INTO ${sql.raw(this.tableName)} (discord_id, balance) VALUES (${discordId}, ${initialBalance})`;
-    this.db.run(query);
+  async createUser(discordId: string, initialBalance: number = 0): Promise<string> {
+    const result = await this.collection.insertOne({
+      discord_id: discordId,
+      balance: initialBalance,
+      created_at: new Date(),
+    } as OptionalId<User>);
 
-    const result = this.db.get<{ id: number }>(sql.raw('SELECT last_insert_rowid() as id'));
-    return result?.id ?? 0;
+    return result.insertedId.toString();
   }
 
   /**
    * Update user balance
    */
-  updateBalance(userId: number, newBalance: number): boolean {
-    return this.update(userId, { balance: newBalance });
+  async updateBalance(userId: string, newBalance: number): Promise<boolean> {
+    return await this.update(userId, { balance: newBalance });
   }
 
   /**
    * Get top users by balance
    */
-  getTopUsers(limit: number = 10): User[] {
-    return this.query()
+  async getTopUsers(limit: number = 10): Promise<User[]> {
+    return await this.query()
       .orderBy('balance', 'DESC')
       .limit(limit)
       .all();
@@ -785,11 +786,11 @@ export class UserRepository extends BaseRepository<User> {
   /**
    * Find or create user
    */
-  findOrCreate(discordId: string, defaultBalance: number = 0): User {
-    let user = this.findByDiscordId(discordId);
+  async findOrCreate(discordId: string, defaultBalance: number = 0): Promise<User> {
+    let user = await this.findByDiscordId(discordId);
     if (!user) {
-      const id = this.createUser(discordId, defaultBalance);
-      user = this.find(id)!;
+      const id = await this.createUser(discordId, defaultBalance);
+      user = await this.find(id)!;
     }
     return user;
   }
@@ -806,25 +807,21 @@ export function createUserRepo(
   ctx: PluginContext,
   api: CoreUtilsAPI
 ): UserRepository {
-  return api.database.createRepository(ctx, 'users', UserRepository) as UserRepository;
+  const collection = api.database.getCollection<User>(ctx, 'users');
+
+  // Create indexes for performance
+  collection.createIndex({ discord_id: 1 }, { unique: true }).catch(() => {});
+  collection.createIndex({ balance: -1 }).catch(() => {});
+
+  return new UserRepository(collection);
 }
 
 /**
- * Initialize database table
+ * Initialize database (no-op for MongoDB - collections auto-create)
  */
 export async function initDatabase(ctx: PluginContext): Promise<void> {
-  const table = `${ctx.dbPrefix}users`;
-
-  ctx.db.run(sql.raw(`
-    CREATE TABLE IF NOT EXISTS ${table} (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      discord_id TEXT NOT NULL UNIQUE,
-      balance INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `));
-
-  ctx.logger.debug(`Initialized table: ${table}`);
+  // MongoDB collections are created automatically on first insert
+  ctx.logger.debug("MongoDB auto-creates collections - no initialization needed");
 }
 ```
 
@@ -852,7 +849,7 @@ async onLoad(ctx) {
       .setDescription("Check your balance"),
 
     async execute(interaction) {
-      const user = userRepo.findOrCreate(interaction.user.id, 100);
+      const user = await userRepo.findOrCreate(interaction.user.id, 100);
       await interaction.reply(`Your balance: ${user.balance} coins`);
     },
   });
@@ -863,7 +860,7 @@ async onLoad(ctx) {
       .setDescription("View top users"),
 
     async execute(interaction) {
-      const topUsers = userRepo.getTopUsers(10);
+      const topUsers = await userRepo.getTopUsers(10);
       const description = topUsers
         .map((u, i) => `${i + 1}. <@${u.discord_id}> - ${u.balance} coins`)
         .join("\n");
@@ -876,48 +873,48 @@ async onLoad(ctx) {
 
 ### Query Builder
 
-For custom queries, use the query builder API with method chaining:
+For custom queries, use the query builder API with method chaining (all methods are async):
 
 ```typescript
 const userRepo = createUserRepo(ctx, api);
 
 // Basic queries
-const user = userRepo.query()
+const user = await userRepo.query()
   .where('discord_id', '=', userId)
   .first();
 
 // Multiple conditions
-const activeUsers = userRepo.query()
+const activeUsers = await userRepo.query()
   .where('balance', '>', 0)
-  .where('created_at', '>', '2025-01-01')
+  .where('created_at', '>', new Date('2025-01-01'))
   .all();
 
 // OR conditions
-const users = userRepo.query()
+const users = await userRepo.query()
   .where('balance', '>', 1000)
   .whereOr('level', '>', 50)
   .all();
 
 // Ordering and limiting
-const topUsers = userRepo.query()
+const topUsers = await userRepo.query()
   .where('balance', '>', 0)
   .orderBy('balance', 'DESC')
   .limit(10)
   .all();
 
 // Counting
-const count = userRepo.query()
+const count = await userRepo.query()
   .where('balance', '>', 0)
   .count();
 
 // Updates
-userRepo.query()
+await userRepo.query()
   .where('discord_id', '=', userId)
   .update({ balance: 500 })
   .execute();
 
 // Deletes
-userRepo.query()
+await userRepo.query()
   .where('balance', '<', 0)
   .delete()
   .execute();
@@ -931,25 +928,25 @@ userRepo.query()
 
 ### Base Repository Methods
 
-All repositories extending `BaseRepository` have these built-in methods:
+All repositories extending `BaseRepository` have these built-in async methods:
 
 ```typescript
-// Find by primary key
-const user = userRepo.find(userId);
+// Find by primary key (MongoDB ObjectId or string)
+const user = await userRepo.find(userId);
 
-// Create new record
-const id = userRepo.create({ discord_id: '123', balance: 100 });
+// Create new record (returns string ID)
+const id = await userRepo.create({ discord_id: '123', balance: 100, created_at: new Date() });
 
 // Update existing record
-const success = userRepo.update(userId, { balance: 200 });
+const success = await userRepo.update(userId, { balance: 200 });
 
 // Delete record
-const deleted = userRepo.delete(userId);
+const deleted = await userRepo.delete(userId);
 
 // Get all records
-const allUsers = userRepo.all();
+const allUsers = await userRepo.all();
 
-// Get query builder
+// Get query builder (chainable, but execute with await)
 const query = userRepo.query();
 ```
 
@@ -985,57 +982,63 @@ export function createUserRepo(ctx: PluginContext, api: CoreUtilsAPI): UserRepos
 **Common Built-in Schemas:**
 - `api.database.schemas.discordId` - Validates Discord snowflake IDs
 - `api.database.schemas.timestamp` - Validates ISO timestamp strings
-- `api.database.schemas.boolean` - Validates SQLite boolean (0/1)
+- `api.database.schemas.boolean` - Validates boolean values
 
-### SQL Injection Prevention
+### MongoDB Injection Prevention
 
-**✅ SAFE - Using parameterized queries:**
+**✅ SAFE - Using query builder and filter objects:**
 
 ```typescript
 // Repository methods (always safe)
-const user = userRepo.query().where('discord_id', '=', userId).first();
+const user = await userRepo.query().where('discord_id', '=', userId).first();
 
-// Direct parameterized queries
-const query = sql`SELECT * FROM ${sql.raw(table)} WHERE discord_id = ${userId}`;
-const user = ctx.db.get<User>(query);
+// Direct MongoDB filter objects (safe with proper objects)
+const user = await collection.findOne({ discord_id: userId });
 ```
 
-**❌ UNSAFE - String interpolation (NEVER DO THIS):**
+**❌ UNSAFE - Building queries from strings (NEVER DO THIS):**
 
 ```typescript
-// This is vulnerable to SQL injection!
-const user = ctx.db.get(sql.raw(`SELECT * FROM ${table} WHERE discord_id = '${userId}'`));
+// MongoDB injection vulnerability!
+const user = await collection.findOne({ discord_id: eval(userId) });
+await collection.find({ $where: userInput }); // Never use $where with user input
 ```
 
-The query builder and repository methods automatically use parameterized queries, making SQL injection impossible.
+The query builder and repository methods automatically use safe MongoDB filter objects, preventing injection attacks.
 
 ### Common Patterns
 
 #### Upsert (Insert or Update)
 
 ```typescript
-// SQLite's INSERT OR REPLACE
-const query = sql`INSERT OR REPLACE INTO ${sql.raw(this.tableName)}
-  (discord_id, balance) VALUES (${discordId}, ${balance})`;
-this.db.run(query);
+// Insert if not exists (using $setOnInsert)
+await collection.updateOne(
+  { discord_id: discordId },
+  {
+    $setOnInsert: { discord_id: discordId, balance: 100, created_at: new Date() }
+  },
+  { upsert: true }
+);
 
-// Or use INSERT OR IGNORE
-const query = sql`INSERT OR IGNORE INTO ${sql.raw(this.tableName)}
-  (discord_id, balance) VALUES (${discordId}, ${balance})`;
-this.db.run(query);
+// Update or insert (replace entire document)
+await collection.replaceOne(
+  { discord_id: discordId },
+  { discord_id: discordId, balance: balance, created_at: new Date() },
+  { upsert: true }
+);
 ```
 
 #### Transactions
 
 ```typescript
-ctx.db.run(sql.raw('BEGIN TRANSACTION'));
+const session = ctx.db.client.startSession();
 try {
-  userRepo.update(userId1, { balance: balance1 - amount });
-  userRepo.update(userId2, { balance: balance2 + amount });
-  ctx.db.run(sql.raw('COMMIT'));
-} catch (error) {
-  ctx.db.run(sql.raw('ROLLBACK'));
-  throw error;
+  await session.withTransaction(async () => {
+    await userRepo.update(userId1, { balance: balance1 - amount });
+    await userRepo.update(userId2, { balance: balance2 + amount });
+  });
+} finally {
+  await session.endSession();
 }
 ```
 
@@ -1045,7 +1048,7 @@ try {
 const page = 0;
 const pageSize = 10;
 
-const users = userRepo.query()
+const users = await userRepo.query()
   .orderBy('balance', 'DESC')
   .limit(pageSize)
   .offset(page * pageSize)
@@ -1254,7 +1257,7 @@ if (!confirmed) {
 
 ```typescript
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
-import { sql } from "drizzle-orm";
+import type { Collection, Document, ObjectId } from "mongodb";
 import { z } from "zod";
 import type { Plugin, PluginContext } from "@types";
 import type { CoreUtilsAPI } from "../core-utils/plugin";
@@ -1267,11 +1270,11 @@ const configSchema = z.object({
 type Config = z.infer<typeof configSchema>;
 
 // Database types
-interface Item {
-  id: number;
+interface Item extends Document {
+  _id?: ObjectId;
   user_id: string;
   name: string;
-  created_at: string;
+  created_at: Date;
 }
 
 const plugin: Plugin<typeof configSchema> = {
@@ -1300,16 +1303,11 @@ const plugin: Plugin<typeof configSchema> = {
     }
     const api = coreUtils.api;
 
-    // Initialize database
-    const table = `${ctx.dbPrefix}items`;
-    ctx.db.run(sql.raw(`
-      CREATE TABLE IF NOT EXISTS ${table} (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )
-    `));
+    // Get MongoDB collection (automatically created)
+    const collection = api.database.getCollection<Item>(ctx, 'items');
+
+    // Create index for better performance
+    collection.createIndex({ user_id: 1, name: 1 }, { unique: true }).catch(() => {});
 
     // List items command
     ctx.registerCommand({
@@ -1318,9 +1316,9 @@ const plugin: Plugin<typeof configSchema> = {
         .setDescription("List your items"),
 
       async execute(interaction) {
-        const items = ctx.db.all<Item>(
-          sql.raw(`SELECT * FROM ${table} WHERE user_id = '${interaction.user.id}' ORDER BY created_at DESC`)
-        ) ?? [];
+        const items = await collection.find({ user_id: interaction.user.id })
+          .sort({ created_at: -1 })
+          .toArray();
 
         if (items.length === 0) {
           await interaction.reply({
@@ -1361,9 +1359,7 @@ const plugin: Plugin<typeof configSchema> = {
         const name = interaction.options.getString("name", true);
 
         // Check item limit
-        const count = ctx.db.get<{ count: number }>(
-          sql.raw(`SELECT COUNT(*) as count FROM ${table} WHERE user_id = '${interaction.user.id}'`)
-        )?.count ?? 0;
+        const count = await collection.countDocuments({ user_id: interaction.user.id });
 
         if (count >= ctx.config.itemLimit) {
           await interaction.reply({
@@ -1373,15 +1369,28 @@ const plugin: Plugin<typeof configSchema> = {
           return;
         }
 
-        // Add item
-        ctx.db.run(sql.raw(`
-          INSERT INTO ${table} (user_id, name)
-          VALUES ('${interaction.user.id}', '${name.replace(/'/g, "''")}')
-        `));
+        try {
+          // Add item (unique index prevents duplicates)
+          await collection.insertOne({
+            user_id: interaction.user.id,
+            name,
+            created_at: new Date(),
+          });
 
-        await interaction.reply({
-          embeds: [api.embeds.success(`Added item: **${name}**`)],
-        });
+          await interaction.reply({
+            embeds: [api.embeds.success(`Added item: **${name}**`)],
+          });
+        } catch (error: any) {
+          if (error.code === 11000) {
+            // Duplicate key error
+            await interaction.reply({
+              embeds: [api.embeds.error("You already have an item with that name!")],
+              flags: MessageFlags.Ephemeral,
+            });
+          } else {
+            throw error;
+          }
+        }
       },
     });
 
@@ -1400,9 +1409,10 @@ const plugin: Plugin<typeof configSchema> = {
         const name = interaction.options.getString("name", true);
 
         // Check if item exists
-        const item = ctx.db.get<Item>(
-          sql.raw(`SELECT * FROM ${table} WHERE user_id = '${interaction.user.id}' AND name = '${name.replace(/'/g, "''")}'`)
-        );
+        const item = await collection.findOne({
+          user_id: interaction.user.id,
+          name: name
+        });
 
         if (!item) {
           await interaction.reply({
@@ -1426,10 +1436,7 @@ const plugin: Plugin<typeof configSchema> = {
         }
 
         // Delete item
-        ctx.db.run(sql.raw(`
-          DELETE FROM ${table}
-          WHERE id = ${item.id}
-        `));
+        await collection.deleteOne({ _id: item._id });
 
         await interaction.followUp({
           embeds: [api.embeds.success(`Deleted **${name}**`)],
@@ -1461,7 +1468,7 @@ const api = coreUtils?.api;
 
 ```typescript
 import { SlashCommandBuilder, MessageFlags } from "discord.js";
-import { sql } from "drizzle-orm";
+import type { Collection, Document, ObjectId } from "mongodb";
 import { z } from "zod";
 import type { Plugin, PluginContext, Command, Event } from "@types";
 ```

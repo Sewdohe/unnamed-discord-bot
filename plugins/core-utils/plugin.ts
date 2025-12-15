@@ -28,6 +28,8 @@ import { MongoQueryBuilder } from "../../src/core/query-builder";
 import { BaseRepository } from "../../src/core/repository";
 import { createSchemaValidator, commonSchemas } from "../../src/core/schema";
 import { getDatabase, prefixCollection } from "../../src/core/database";
+import { createScheduler, type SchedulerAPI } from "./scheduler";
+import { createDefaultStatsTracker, type DefaultStats, DefaultStatsTracker } from "./default-stats";
 
 // ============ Configuration ============
 
@@ -66,6 +68,8 @@ export interface CoreUtilsAPI {
   components: ComponentsHelpers;
   confirm: ConfirmFunction;
   database: DatabaseHelpers;
+  scheduler: SchedulerAPI;
+  getDefaultStats?: () => DefaultStats;
 }
 
 interface DatabaseHelpers {
@@ -327,6 +331,12 @@ const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
   api: null as unknown as CoreUtilsAPI,
 
   async onLoad(ctx: PluginContext<CoreUtilsConfig>) {
+    // Create scheduler
+    const scheduler = createScheduler(ctx);
+
+    // Create default stats tracker
+    const defaultStatsTracker = createDefaultStatsTracker(ctx, ctx.client);
+
     // Build API
     const api: CoreUtilsAPI = {
       permissions: createPermissionHelpers(),
@@ -335,10 +345,29 @@ const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
       components: createComponentsHelpers(),
       confirm: createConfirmFunction(ctx),
       database: createDatabaseHelpers(),
+      scheduler,
+      getDefaultStats: () => defaultStatsTracker.getStats(),
     };
 
     // Expose API
     (this as any).api = api;
+
+    // Register event handlers for default stats tracking
+    ctx.registerEvent({
+      name: "messageCreate",
+      async execute(pluginCtx, message) {
+        defaultStatsTracker.trackMessage(message);
+      },
+    });
+
+    ctx.registerEvent({
+      name: "interactionCreate",
+      async execute(pluginCtx, interaction) {
+        if (interaction.isChatInputCommand()) {
+          defaultStatsTracker.trackCommand(interaction.user.id);
+        }
+      },
+    });
 
     // Global dispatcher: listen for component interactions and route to registered global UI groups
     ctx.registerEvent({
@@ -365,6 +394,13 @@ const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
     });
 
     ctx.logger.info("Core utilities loaded!");
+  },
+
+  async onUnload() {
+    // Cleanup scheduler
+    if (this.api?.scheduler) {
+      this.api.scheduler.cleanup();
+    }
   },
 };
 

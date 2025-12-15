@@ -1,194 +1,214 @@
-import { SlashCommandBuilder, MessageFlags } from "discord.js";
-import { Collection, Document, ObjectId } from "mongodb";
+/**
+ * Counting Game Plugin
+ *
+ * A classic Discord counting game where users count sequentially in designated channels.
+ *
+ * Features:
+ * - Multiple counting channels per server
+ * - Configurable alternating accounts rule
+ * - Optional non-counting message deletion
+ * - Statistics tracking per user
+ * - Leaderboards (users and channels)
+ * - Milestone celebrations
+ * - High score tracking
+ */
+
 import { z } from "zod";
 import type { Plugin, PluginContext } from "@types";
 import type { CoreUtilsAPI } from "../core-utils/plugin";
-import { getDatabase, prefixCollection } from "../../src/core/database";
+import type { StatisticsAPI } from "../statistics/plugin";
+import { createGameRepo, createStatsRepo } from "./db/repository";
+import { createCountingCommand } from "./commands";
+import { createMessageHandler } from "./events";
 
-// Config schema
+// ============ Configuration Schema ============
+
 const configSchema = z.object({
-  itemLimit: z.number().min(1).max(100).default(20),
-});
+  // Enable/disable the plugin
+  enabled: z.boolean()
+    .default(true)
+    .describe("Enable or disable the counting game"),
 
-type Config = z.infer<typeof configSchema>;
+  // Alternating accounts rule
+  alternatingAccounts: z.boolean()
+    .default(true)
+    .describe("Require different users to alternate (same user can't count twice in a row)"),
 
-// Database types
-interface Item extends Document {
-  _id?: ObjectId;
-  user_id: string;
-  name: string;
-  created_at: Date;
-}
+  // Allow talking in counting channels
+  allowTalking: z.boolean()
+    .default(false)
+    .describe("Allow non-counting messages in counting channels (if false, they will be deleted)"),
+
+  // Reactions for correct/incorrect counts
+  reactions: z.object({
+    success: z.string().default("✅").describe("Reaction for correct counts"),
+    failure: z.string().default("❌").describe("Reaction for incorrect counts"),
+  }).default({}),
+
+  // Reset on fail
+  resetOnFail: z.boolean()
+    .default(true)
+    .describe("Reset the count to 0 when someone makes a mistake (if false, counting continues)"),
+
+  // Milestone announcements
+  milestones: z.object({
+    enabled: z.boolean().default(true).describe("Announce milestone achievements"),
+    interval: z.number().min(10).max(1000).default(100).describe("Milestone interval (e.g., every 100 counts)"),
+  }).default({}),
+
+  // Counting channels (managed via commands, but can be pre-configured)
+  countingChannels: z.array(z.string()).default([]).describe("Pre-configured counting channel IDs"),
+}).describe("Counting Game Configuration");
+
+type CountingConfig = z.infer<typeof configSchema>;
+
+// ============ Plugin Definition ============
 
 const plugin: Plugin<typeof configSchema> = {
+  // ============ Manifest ============
   manifest: {
-    name: "items",
+    name: "counting-game",
     version: "1.0.0",
-    description: "Manage user items",
+    description: "A classic counting game with statistics and leaderboards",
+    author: "Discord Bot",
     dependencies: {
-      soft: ["core-utils"],
+      hard: ["core-utils"],
+      soft: ["statistics"],
     },
   },
 
+  // ============ Configuration ============
   config: {
     schema: configSchema,
     defaults: {
-      itemLimit: 20,
+      enabled: true,
+      alternatingAccounts: true,
+      allowTalking: false,
+      reactions: {
+        success: "✅",
+        failure: "❌",
+      },
+      resetOnFail: true,
+      milestones: {
+        enabled: true,
+        interval: 100,
+      },
+      countingChannels: [],
     },
   },
 
-  async onLoad(ctx: PluginContext<Config>) {
-    // Get core utils
+  // ============ Load Handler ============
+  async onLoad(ctx: PluginContext<CountingConfig>) {
+    // Check if plugin is enabled
+    if (!ctx.config.enabled) {
+      ctx.logger.warn("Counting game plugin is disabled in config");
+      return;
+    }
+
+    // Get core-utils plugin
     const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
     if (!coreUtils?.api) {
-      ctx.logger.warn("core-utils not available");
-      return;
+      ctx.logger.error("core-utils plugin is required but not available");
+      throw new Error("core-utils plugin required");
     }
     const api = coreUtils.api;
 
-    // Get MongoDB collection (automatically created)
-    const collection = api.database.getCollection<Item>(ctx, 'items');
+    // Create repositories
+    const gameRepo = createGameRepo(ctx, api);
+    const statsRepo = createStatsRepo(ctx, api);
 
-    // Create index for better performance
-    collection.createIndex({ user_id: 1, name: 1 }, { unique: true }).catch(() => {});
+    // ============ Register Commands ============
+    ctx.registerCommand(createCountingCommand(ctx, api, gameRepo, statsRepo));
 
-    // List items command
-    ctx.registerCommand({
-      data: new SlashCommandBuilder()
-        .setName("items")
-        .setDescription("List your items"),
+    // ============ Register Event Handlers ============
+    ctx.registerEvent(createMessageHandler(ctx, api, gameRepo, statsRepo));
 
-      async execute(interaction) {
-        const items = await collection.find({ user_id: interaction.user.id })
-          .sort({ created_at: -1 })
-          .toArray();
-
-        if (items.length === 0) {
-          await interaction.reply({
-            embeds: [api.embeds.info("You have no items yet!")],
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
-        await api.paginate(interaction, {
-          items,
-          formatPage: (pageItems, page, totalPages) => {
-            const description = pageItems
-              .map((item, i) => `${i + 1}. ${item.name}`)
-              .join("\n");
-
-            return api.embeds.primary(description, "Your Items")
-              .setFooter({ text: `Page ${page + 1}/${totalPages} • ${items.length} total items` });
-          },
-          itemsPerPage: 10,
-        });
+    // ============ Ready Event ============
+    ctx.registerEvent({
+      name: "clientReady",
+      once: true,
+      async execute(ctx, client) {
+        ctx.logger.info("Counting game plugin ready!");
+        ctx.logger.info(`Rules: Alternating=${ctx.config.alternatingAccounts}, AllowTalking=${ctx.config.allowTalking}, ResetOnFail=${ctx.config.resetOnFail}`);
       },
     });
 
-    // Add item command
-    ctx.registerCommand({
-      data: new SlashCommandBuilder()
-        .setName("add-item")
-        .setDescription("Add a new item")
-        .addStringOption(opt =>
-          opt.setName("name")
-            .setDescription("Item name")
-            .setRequired(true)
-            .setMaxLength(50)
-        ),
+    // Register statistics provider
+    const statisticsPlugin = ctx.getPlugin<{ api: StatisticsAPI }>("statistics");
+    if (statisticsPlugin?.api) {
+      statisticsPlugin.api.registerProvider({
+        id: "counting-game-stats",
+        category: "Counting Game",
+        priority: 70,
+        collect: async () => {
+          // Get all games
+          const allGames = await gameRepo.all();
 
-      async execute(interaction) {
-        const name = interaction.options.getString("name", true);
+          // Calculate aggregate stats
+          const totalGames = allGames.length;
+          const totalCounts = allGames.reduce((sum, g) => sum + g.total_counts, 0);
+          const totalFails = allGames.reduce((sum, g) => sum + g.total_fails, 0);
+          const highestScore = Math.max(0, ...allGames.map(g => g.high_score));
+          const activeGames = allGames.filter(g => g.current_count > 0).length;
 
-        // Check item limit
-        const count = await collection.countDocuments({ user_id: interaction.user.id });
+          return {
+            "Active Games": activeGames.toLocaleString(),
+            "Total Channels": totalGames.toLocaleString(),
+            "Total Counts": totalCounts.toLocaleString(),
+            "Total Fails": totalFails.toLocaleString(),
+            "Highest Score": highestScore.toLocaleString(),
+          };
+        },
+      });
+      ctx.logger.info("Registered counting-game statistics provider");
+    }
 
-        if (count >= ctx.config.itemLimit) {
-          await interaction.reply({
-            embeds: [api.embeds.error(`You can only have ${ctx.config.itemLimit} items!`)],
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
+    ctx.logger.info("Counting game plugin loaded successfully!");
+  },
 
-        try {
-          // Add item (unique index prevents duplicates)
-          await collection.insertOne({
-            user_id: interaction.user.id,
-            name,
-            created_at: new Date(),
-          });
-
-          await interaction.reply({
-            embeds: [api.embeds.success(`Added item: **${name}**`)],
-          });
-        } catch (error: any) {
-          if (error.code === 11000) {
-            // Duplicate key error
-            await interaction.reply({
-              embeds: [api.embeds.error("You already have an item with that name!")],
-              flags: MessageFlags.Ephemeral,
-            });
-          } else {
-            throw error;
-          }
-        }
-      },
-    });
-
-    // Delete item command
-    ctx.registerCommand({
-      data: new SlashCommandBuilder()
-        .setName("delete-item")
-        .setDescription("Delete an item")
-        .addStringOption(opt =>
-          opt.setName("name")
-            .setDescription("Item name")
-            .setRequired(true)
-        ),
-
-      async execute(interaction) {
-        const name = interaction.options.getString("name", true);
-
-        // Check if item exists
-        const item = await collection.findOne({
-          user_id: interaction.user.id,
-          name: name
-        });
-
-        if (!item) {
-          await interaction.reply({
-            embeds: [api.embeds.error("Item not found!")],
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
-        // Confirm deletion
-        const confirmed = await api.confirm(interaction, {
-          message: `Delete **${name}**?`,
-          title: "Confirm Deletion",
-        });
-
-        if (!confirmed) {
-          await interaction.followUp({
-            embeds: [api.embeds.info("Deletion cancelled")],
-          });
-          return;
-        }
-
-        // Delete item
-        await collection.deleteOne({ _id: item._id });
-
-        await interaction.followUp({
-          embeds: [api.embeds.success(`Deleted **${name}**`)],
-        });
-      },
-    });
-
-    ctx.logger.info("Items plugin loaded!");
+  // ============ Unload Handler ============
+  async onUnload() {
+    // Cleanup if needed
   },
 };
 
 export default plugin;
+
+/**
+ * USAGE GUIDE:
+ *
+ * SETUP:
+ * 1. Use `/counting setup #channel` to create a counting channel
+ * 2. Start counting from 1 in that channel
+ * 3. Users count sequentially: 1, 2, 3, 4, ...
+ *
+ * RULES:
+ * - Count must be sequential (if current is 5, next must be 6)
+ * - If alternatingAccounts is true, users must alternate
+ * - If allowTalking is false, non-counting messages are deleted
+ * - If resetOnFail is true, count resets to 0 on mistakes
+ *
+ * COMMANDS:
+ * - `/counting setup #channel` - Set up a counting channel (Admin)
+ * - `/counting remove #channel` - Remove a counting channel (Admin)
+ * - `/counting status [#channel]` - View current count and stats
+ * - `/counting reset [#channel]` - Reset the count to 0 (Admin)
+ * - `/counting leaderboard [type]` - View leaderboards
+ * - `/counting stats [user]` - View user statistics
+ *
+ * CONFIGURATION (config/counting-game.yaml):
+ * - enabled: Enable/disable the plugin
+ * - alternatingAccounts: Require users to alternate
+ * - allowTalking: Allow non-counting messages
+ * - reactions.success: Emoji for correct counts (default: ✅)
+ * - reactions.failure: Emoji for incorrect counts (default: ❌)
+ * - resetOnFail: Reset count on mistakes
+ * - milestones.enabled: Announce milestones
+ * - milestones.interval: Milestone interval (default: 100)
+ *
+ * TIPS:
+ * - Set up dedicated counting channels for best experience
+ * - Use alternatingAccounts=true for more challenging gameplay
+ * - Set allowTalking=false to keep counting channels clean
+ * - Check leaderboards to see top counters!
+ */

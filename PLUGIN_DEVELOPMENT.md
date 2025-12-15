@@ -613,7 +613,7 @@ ctx.registerEvent({
 
 // When the bot is ready (fires once)
 ctx.registerEvent({
-  name: "ready",
+  name: "clientReady",
   once: true,
   async execute(ctx, client) {
     ctx.logger.info(`Connected as ${client.user.tag}`);

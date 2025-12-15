@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ButtonStyle, EmbedBuilder, MessageFlags, TextChannel } from "discord.js";
 import type { Plugin, PluginContext } from "@types";
 import type { CoreUtilsAPI } from "../core-utils/plugin";
+import type { StatisticsAPI } from "../statistics/plugin";
 import { initDatabase, createVerificationRepo } from "./db/repository";
 import { verifyCommand } from "./commands";
 import { guildMemberAddHandler } from "./events";
@@ -73,6 +74,7 @@ const plugin: Plugin<typeof configSchema> = {
     author: "Sewdohe",
     dependencies: {
       hard: ["core-utils"],
+      soft: ["statistics"],
     },
   },
 
@@ -226,6 +228,41 @@ const plugin: Plugin<typeof configSchema> = {
 
     // Register events
     ctx.registerEvent(guildMemberAddHandler(ctx, api));
+
+    // Register statistics provider
+    const statisticsPlugin = ctx.getPlugin<{ api: StatisticsAPI }>("statistics");
+    if (statisticsPlugin?.api) {
+      statisticsPlugin.api.registerProvider({
+        id: "verification-stats",
+        category: "Verification",
+        priority: 60,
+        collect: async () => {
+          const repo = createVerificationRepo(ctx, api);
+
+          // Get all records
+          const allRecords = await repo.all();
+          const totalRecords = allRecords.length;
+
+          // Count verified vs unverified
+          const verified = allRecords.filter(r => r.verified).length;
+          const pending = allRecords.filter(r => !r.verified).length;
+
+          // Count verifications in last 24 hours
+          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+          const recentVerifications = allRecords.filter(
+            r => r.verified && r.verified_at && r.verified_at >= oneDayAgo
+          ).length;
+
+          return {
+            "Total Users": totalRecords.toLocaleString(),
+            "Verified": verified.toLocaleString(),
+            "Pending": pending.toLocaleString(),
+            "Verified (24h)": recentVerifications.toLocaleString(),
+          };
+        },
+      });
+      ctx.logger.info("Registered verification statistics provider");
+    }
 
     ctx.logger.info("Verification plugin loaded!");
   },
