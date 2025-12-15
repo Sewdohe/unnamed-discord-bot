@@ -34,6 +34,9 @@ export class Bot {
   async start(): Promise<void> {
     // Initialize MongoDB connection
     const db = await initDatabase();
+    //@ts-ignore
+    //TODO: fix ts ignore
+    // this is a type error left over from when we switched db libs
     this.pluginLoader = new PluginLoader(this.client, db);
 
     // Load all plugins
