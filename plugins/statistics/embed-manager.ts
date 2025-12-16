@@ -83,6 +83,7 @@ export class EmbedManager {
    * @returns true if successful, false otherwise
    */
   async update(stats: CollectedStats[]): Promise<boolean> {
+    this.ctx.logger.info("Updating statistics embed...");
     if (!this.channelId) {
       this.ctx.logger.warn("Cannot update statistics: no channel configured");
       return false;
@@ -98,6 +99,17 @@ export class EmbedManager {
 
       const textChannel = channel as TextChannel;
       const embed = this.createEmbed(stats, new Date());
+
+      // try to fetch existing pinned message if not already cached
+      if (!this.pinnedMessage) {
+        const pinnedMessages = await textChannel.messages.fetchPinned();
+        if (pinnedMessages.size > 0) {
+          this.pinnedMessage = pinnedMessages.first() || null;
+          if (this.pinnedMessage) {
+            this.ctx.logger.info(`Found existing pinned statistics message: ${this.pinnedMessage.id}`);
+          }
+        }
+      }
 
       // Try to edit existing pinned message
       if (this.pinnedMessage) {

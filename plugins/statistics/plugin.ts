@@ -30,15 +30,15 @@ const configSchema = z.object({
     .default(true)
     .describe("Enable or disable the statistics plugin"),
 
-  channelId: z.string()
-    .optional()
-    .describe("Channel ID for statistics display"),
-
   updateInterval: z.number()
     .min(60000)  // Minimum 1 minute
     .max(3600000) // Maximum 1 hour
     .default(300000) // Default 5 minutes
     .describe("Update interval in milliseconds"),
+
+  statisticsChannelId: z.string()
+    .optional()
+    .describe("Pre-configured channel ID for statistics display"),
 
   embedColor: z.number()
     .default(0x5865f2)
@@ -86,7 +86,8 @@ const plugin: Plugin<typeof configSchema> & { api?: StatisticsAPI } = {
     schema: configSchema,
     defaults: {
       enabled: true,
-      updateInterval: 300000, // 5 minutes
+      updateInterval: 10000, // 5 minutes
+      statisticsChannelId: "1449924841732837386",
       embedColor: 0x5865f2,
     },
   },
@@ -107,13 +108,14 @@ const plugin: Plugin<typeof configSchema> & { api?: StatisticsAPI } = {
     }
     const api = coreUtils.api;
 
+
     // Create collector and embed manager
     const collector = createStatCollector(ctx);
     const embedManager = createEmbedManager(ctx, ctx.config.embedColor);
 
-    // Set channel if configured
-    if (ctx.config.channelId) {
-      embedManager.setChannel(ctx.config.channelId);
+    // set channel if pre-configured
+    if (ctx.config.statisticsChannelId) {
+      embedManager.setChannel(ctx.config.statisticsChannelId);
     }
 
     // ============ Register Default Stats Provider ============
@@ -187,12 +189,6 @@ const plugin: Plugin<typeof configSchema> & { api?: StatisticsAPI } = {
       async execute(pluginCtx, client) {
         ctx.logger.info("Statistics plugin ready!");
         ctx.logger.info(`Registered ${collector.getProviderCount()} stat provider(s)`);
-
-        // Perform initial update if channel is configured
-        if (ctx.config.channelId) {
-          ctx.logger.info("Performing initial statistics update...");
-          await updateStats();
-        }
       },
     });
 

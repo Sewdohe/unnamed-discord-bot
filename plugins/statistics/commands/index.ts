@@ -8,10 +8,11 @@ import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from "discord.j
 import type { Command, PluginContext } from "@types";
 import type { StatCollector } from "../collector";
 import type { EmbedManager } from "../embed-manager";
+import type { CoreUtilsAPI } from "../../core-utils/plugin";
 
 interface StatisticsConfig {
   enabled: boolean;
-  channelId?: string;
+  statisticsChannelId?: string;
   updateInterval: number;
   embedColor: number;
 }
@@ -35,13 +36,6 @@ export function createStatisticsCommand(
         sub
           .setName("setup")
           .setDescription("Set up statistics display in a channel")
-          .addChannelOption(opt =>
-            opt
-              .setName("channel")
-              .setDescription("Channel to display statistics in")
-              .setRequired(true)
-              .addChannelTypes(ChannelType.GuildText)
-          )
       )
       .addSubcommand(sub =>
         sub
@@ -89,7 +83,22 @@ async function handleSetup(
   embedManager: EmbedManager,
   forceUpdateCallback: () => Promise<void>
 ): Promise<void> {
-  const channel = interaction.options.getChannel("channel", true);
+  let channel = null;
+
+  // Get core-utils API
+  const coreUtils = ctx.getPlugin<{ api: CoreUtilsAPI }>("core-utils");
+  if (!coreUtils?.api) {
+    ctx.logger.error("core-utils plugin is required but not available");
+    throw new Error("core-utils plugin required");
+  }
+
+
+  if (ctx.config.statisticsChannelId) {
+    channel = await interaction.guild.channels.fetch(ctx.config.statisticsChannelId);
+  } else {
+    coreUtils.api.embeds.error("No statistics channel configured in plugin settings.", "Setup Error");
+    return;
+  }
 
   // Update config (this will be saved on next bot restart)
   // For now, just update the embed manager
@@ -100,6 +109,7 @@ async function handleSetup(
     ephemeral: true,
   });
 
+  
   // Force an immediate update
   ctx.logger.info(`Setting up statistics in channel: ${channel.id}`);
   await forceUpdateCallback();

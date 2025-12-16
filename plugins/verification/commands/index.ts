@@ -135,6 +135,7 @@ async function handlePanel(ctx: PluginContext<VerificationConfig>, api: CoreUtil
       .setDescription(`Panel sent to ${targetChannel}`)
       .setColor(0x57f287);
 
+
     await interaction.reply({ embeds: [successEmbed], flags: MessageFlags.Ephemeral });
   } catch (error) {
     ctx.logger.error("Failed to send verification panel:", error);
