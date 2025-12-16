@@ -100,13 +100,36 @@ export class EmbedManager {
       const textChannel = channel as TextChannel;
       const embed = this.createEmbed(stats, new Date());
 
+      // NOTE: This code is deprecated due to Discord.js v14 changes
       // try to fetch existing pinned message if not already cached
+      // if (!this.pinnedMessage) {
+      //   const pinnedMessages = await textChannel.messages.fetchPinned();
+      //   if (pinnedMessages.size > 0) {
+      //     this.pinnedMessage = pinnedMessages.first() || null;
+      //     if (this.pinnedMessage) {
+      //       this.ctx.logger.info(`Found existing pinned statistics message: ${this.pinnedMessage.id}`);
+      //     }
+      //   }
+      // }
+
       if (!this.pinnedMessage) {
-        const pinnedMessages = await textChannel.messages.fetchPinned();
-        if (pinnedMessages.size > 0) {
-          this.pinnedMessage = pinnedMessages.first() || null;
-          if (this.pinnedMessage) {
+        // 1. Get the list of lightweight "Pin" objects
+        const pinnedMessageData = await textChannel.messages.fetchPins();
+        const pinnedPins = pinnedMessageData.items;
+
+        if (pinnedPins.length > 0) {
+          // 2. Get the first pin reference
+          const firstPin = pinnedPins[0];
+
+          try {
+            // 3. FIX: Use the ID from the pin to fetch the REAL Message object
+            // This converts the lightweight MessagePin into a full Message
+            this.pinnedMessage = await textChannel.messages.fetch(firstPin.message.id);
+            
             this.ctx.logger.info(`Found existing pinned statistics message: ${this.pinnedMessage.id}`);
+          } catch (error) {
+            this.ctx.logger.error(`Failed to resolve pinned message: ${error}`);
+            this.pinnedMessage = null;
           }
         }
       }

@@ -4,7 +4,7 @@
  * Admin commands for managing the statistics plugin
  */
 
-import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from "discord.js";
+import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, MessageFlags } from "discord.js";
 import type { Command, PluginContext } from "@types";
 import type { StatCollector } from "../collector";
 import type { EmbedManager } from "../embed-manager";
@@ -106,7 +106,7 @@ async function handleSetup(
 
   await interaction.reply({
     content: `Statistics display set up in <#${channel.id}>!\nStatistics will update every ${Math.floor(ctx.config.updateInterval / 60000)} minutes.`,
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 
   
