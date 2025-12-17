@@ -113,7 +113,7 @@ async function handleChooseClass(
 
         const classChooseEmbed = api.embeds.info(`It's time to choose a class, ${player.name}!`);
         await interaction.reply({ embeds: [classChooseEmbed], components: [row], flags: MessageFlags.Ephemeral });
-        ctx.logger.info(`Waiting for class choice from user ${interaction.user.id}`);
+        ctx.logger.debug(`Waiting for class choice from user ${interaction.user.id}`);
 
         const filter = (i: any) => i.user.id === interaction.user.id;
         const collected = await interaction.channel?.awaitMessageComponent({ filter, time: 60000 });
@@ -125,7 +125,7 @@ async function handleChooseClass(
         }
 
         let chosenClass: RPGClass;
-        ctx.logger.info(`User ${interaction.user.displayName} selected class button: ${collected.customId}`);
+        ctx.logger.debug(`User ${interaction.user.displayName} selected class button: ${collected.customId}`);
 
         switch (collected.customId) {
           case "warrior":
@@ -161,7 +161,7 @@ async function handleChooseClass(
 
         const successEmbed = api.embeds.success(`You have successfully chosen the ${chosenClass.name} class! The classes base stats have been applied to your character.`);
         await collected.update({ embeds: [successEmbed], components: [] });
-        ctx.logger.info(`User ${interaction.user.displayName} has chosen class: ${chosenClass.name}`);
+        ctx.logger.debug(`User ${interaction.user.displayName} has chosen class: ${chosenClass.name}`);
 
         return;
       } catch (error) {
@@ -184,7 +184,7 @@ async function handleShowProfile(
 ) {
 
   const targetUser = interaction.options.getUser("user") || interaction.user;
-  ctx.logger.info(`Attempting to display RPG profile for user: ${targetUser.id}`);
+  ctx.logger.debug(`Attempting to display RPG profile for user: ${targetUser.id}`);
 
   const player = await playerRepo.getRPGProfileByDiscordID(interaction.user.id);
 

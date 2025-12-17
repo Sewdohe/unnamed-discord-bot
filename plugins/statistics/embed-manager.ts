@@ -27,7 +27,7 @@ export class EmbedManager {
   setChannel(channelId: string): void {
     this.channelId = channelId;
     this.pinnedMessage = null; // Reset pinned message when channel changes
-    this.ctx.logger.info(`Statistics channel set to: ${channelId}`);
+    this.ctx.logger.debug(`Statistics channel set to: ${channelId}`);
   }
 
   /**
@@ -83,7 +83,7 @@ export class EmbedManager {
    * @returns true if successful, false otherwise
    */
   async update(stats: CollectedStats[]): Promise<boolean> {
-    this.ctx.logger.info("Updating statistics embed...");
+    this.ctx.logger.debug("Updating statistics embed...");
     if (!this.channelId) {
       this.ctx.logger.warn("Cannot update statistics: no channel configured");
       return false;
@@ -100,18 +100,6 @@ export class EmbedManager {
       const textChannel = channel as TextChannel;
       const embed = this.createEmbed(stats, new Date());
 
-      // NOTE: This code is deprecated due to Discord.js v14 changes
-      // try to fetch existing pinned message if not already cached
-      // if (!this.pinnedMessage) {
-      //   const pinnedMessages = await textChannel.messages.fetchPinned();
-      //   if (pinnedMessages.size > 0) {
-      //     this.pinnedMessage = pinnedMessages.first() || null;
-      //     if (this.pinnedMessage) {
-      //       this.ctx.logger.info(`Found existing pinned statistics message: ${this.pinnedMessage.id}`);
-      //     }
-      //   }
-      // }
-
       if (!this.pinnedMessage) {
         // 1. Get the list of lightweight "Pin" objects
         const pinnedMessageData = await textChannel.messages.fetchPins();
@@ -126,7 +114,7 @@ export class EmbedManager {
             // This converts the lightweight MessagePin into a full Message
             this.pinnedMessage = await textChannel.messages.fetch(firstPin.message.id);
             
-            this.ctx.logger.info(`Found existing pinned statistics message: ${this.pinnedMessage.id}`);
+            this.ctx.logger.debug(`Found existing pinned statistics message: ${this.pinnedMessage.id}`);
           } catch (error) {
             this.ctx.logger.error(`Failed to resolve pinned message: ${error}`);
             this.pinnedMessage = null;
@@ -157,7 +145,7 @@ export class EmbedManager {
       const newMessage = await textChannel.send({ embeds: [embed] });
       await newMessage.pin();
       this.pinnedMessage = newMessage;
-      this.ctx.logger.info("Created new pinned statistics message");
+      this.ctx.logger.debug("Created new pinned statistics message");
 
       return true;
     } catch (error) {
