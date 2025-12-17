@@ -138,8 +138,10 @@ const plugin: Plugin<typeof configSchema> = {
         // Use ctx from closure instead of pluginCtx parameter (which is core-utils context)
         const repo = createVerificationRepo(ctx, api);
 
+        const isVerified = await repo.isVerified(interaction.user.id, interaction.guildId!);
+
         // Check if already verified
-        if (repo.isVerified(interaction.user.id, interaction.guildId!)) {
+        if (isVerified) {
           await interaction.reply({
             embeds: [api.embeds.info("You are already verified!", "Already Verified")],
             flags: MessageFlags.Ephemeral,

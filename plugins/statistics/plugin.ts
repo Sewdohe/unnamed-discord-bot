@@ -38,7 +38,8 @@ const configSchema = z.object({
 
   statisticsChannelId: z.string()
     .optional()
-    .describe("Pre-configured channel ID for statistics display"),
+    .describe("Pre-configured channel ID for statistics display")
+    .default(""),
 
   embedColor: z.number()
     .default(0x5865f2)
@@ -87,7 +88,7 @@ const plugin: Plugin<typeof configSchema> & { api?: StatisticsAPI } = {
     defaults: {
       enabled: true,
       updateInterval: 10000, // 5 minutes
-      statisticsChannelId: "1449924841732837386",
+      statisticsChannelId: "",
       embedColor: 0x5865f2,
     },
   },
@@ -189,6 +190,17 @@ const plugin: Plugin<typeof configSchema> & { api?: StatisticsAPI } = {
       async execute(pluginCtx, client) {
         ctx.logger.info("Statistics plugin ready!");
         ctx.logger.info(`Registered ${collector.getProviderCount()} stat provider(s)`);
+
+        // Schedule auto-updates now that the client is ready
+        api.scheduler.interval(
+          "statistics-update",
+          ctx.config.updateInterval,
+          updateStats
+        );
+        ctx.logger.info(`Scheduled statistics updates every ${ctx.config.updateInterval / 60000} minutes`);
+
+        // Perform an initial update
+        await updateStats();
       },
     });
 

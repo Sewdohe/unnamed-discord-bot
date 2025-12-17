@@ -80,6 +80,7 @@ export interface PluginContext<TConfig = Record<string, unknown>> {
   registerCommand(command: Command): void;
   registerEvent<K extends keyof ClientEvents>(event: Event<K>): void;
   getPlugin<T = unknown>(name: string): T | undefined;
+  updateConfig(newConfig: Partial<TConfig>): Promise<{ success: boolean; error?: z.ZodError | Error }>;
 }
 
 // ============ Internal Types ============

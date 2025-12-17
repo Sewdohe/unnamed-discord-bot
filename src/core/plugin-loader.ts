@@ -2,7 +2,7 @@ import { readdir } from "fs/promises";
 import { join } from "path";
 import { SlashCommandBuilder } from "discord.js";
 import type { Client, ClientEvents } from "discord.js";
-import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import type { Db } from "mongodb";
 import type {
   Plugin,
   PluginManifest,
@@ -12,19 +12,21 @@ import type {
   Event,
 } from "../types/";
 import { createLogger } from "./logger";
-import { loadPluginConfig } from "./config";
-import { prefixTable } from "./database";
+import { z } from "zod";
+import { loadPluginConfig, savePluginConfig } from "./config";
+import { prefixCollection } from "./database";
 
 const logger = createLogger("plugins");
+
 
 const PLUGINS_DIR = join(process.cwd(), "plugins");
 
 export class PluginLoader {
   private plugins = new Map<string, LoadedPlugin>();
   private client: Client;
-  private db: BunSQLiteDatabase;
+  private db: Db;
 
-  constructor(client: Client, db: BunSQLiteDatabase) {
+  constructor(client: Client, db: Db) {
     this.client = client;
     this.db = db;
   }
@@ -156,7 +158,7 @@ export class PluginLoader {
       logger: pluginLogger,
       config,
       db: this.db,
-      dbPrefix: prefixTable(manifest.name, ""),
+      dbPrefix: prefixCollection(manifest.name, ""),
 
       registerCommand: (command: Command) => {
         commands.push(command);
@@ -171,6 +173,33 @@ export class PluginLoader {
       getPlugin: <T = unknown>(name: string): T | undefined => {
         const loaded = this.plugins.get(name);
         return loaded?.plugin as T | undefined;
+      },
+      
+      updateConfig: async (newPartialConfig) => {
+        if (!plugin.config) {
+          pluginLogger.warn("This plugin does not have a configuration schema.");
+          return { success: false, error: new Error("No schema defined.") };
+        }
+      
+        // Merge new config with old
+        const newConfig = { ...context.config, ...newPartialConfig };
+      
+        // Validate the merged config
+        const validationResult = plugin.config.schema.safeParse(newConfig);
+      
+        if (!validationResult.success) {
+          pluginLogger.error("Configuration update failed validation:", validationResult.error);
+          return { success: false, error: validationResult.error };
+        }
+      
+        // Save to file
+        savePluginConfig(manifest.name, validationResult.data, plugin.config);
+      
+        // Update in-memory config
+        context.config = validationResult.data;
+        
+        pluginLogger.info("Configuration updated successfully");
+        return { success: true };
       },
     };
 
