@@ -203,25 +203,6 @@ export class RPGPlayerRepository extends BaseRepository<RPGPlayer> {
       updated_at: new Date()
     } as any);
   }
-
-  /**
-   * Transfer item to another user
-   */
-  // async transferItem(itemId: string, newUserId: string): Promise<boolean> {
-  //   return await this.update(itemId, {
-  //     user_id: newUserId,
-  //     updated_at: new Date()
-  //   } as any);
-  // }
-
-  /**
-   * Count items for a user
-   */
-  // async countUserItems(userId: string): Promise<number> {
-  //   return await this.query()
-  //     .where('user_id', '=', userId)
-  //     .count();
-  // }
 }
 
 // ============ Factory Function ============
@@ -265,14 +246,102 @@ export function createRPGProfileRepository(
   return new RPGPlayerRepository(collection);
 }
 
-/**
- * Initialize database (MongoDB collections are auto-created, so this is optional)
- * You can use this function to set up any initial data or perform migrations
- */
-export async function initDatabase(ctx: PluginContext): Promise<void> {
-  ctx.logger.debug("MongoDB collections auto-created - no initialization needed");
 
-  // Example: You could seed initial data here
-  // const collection = api.database.getCollection<Item>(ctx, 'items');
-  // await collection.insertOne({ ... });
+export interface RPGBattle extends Document {
+  _id?: ObjectId;
+  attacker_id: string;
+  defender_id: string;
+  winner_id: string;
+  battle_log: string[];
+  active_player_id: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+
+// ============ Repository ============
+
+/**
+ * repository with common CRUD operations
+ * Demonstrates MongoDB usage with the repository pattern
+ */
+export class RPGBattleRepository extends BaseRepository<RPGPlayer> {
+  constructor(collection: Collection<RPGPlayer>) {
+    super(collection);
+  }
+
+  /**
+   * Create a new RPG profile for a user
+   */
+  async createRPGProfile(profile: RPGPlayer): Promise<string> {
+    const result = await this.collection.insertOne({
+      ...profile,
+      created_at: new Date(),
+      updated_at: new Date(),
+    } as OptionalId<RPGPlayer>);
+
+    return result.insertedId.toString();
+  }
+
+  /**
+   * Get an player by MongoDB ObjectId
+   */
+  async getRPGProfile(user_id: string): Promise<RPGPlayer | null> {
+    return await this.find(user_id);
+  }
+
+  async getRPGProfileByDiscordID(discord_id: string): Promise<RPGPlayer | null> {
+    return await this.findBy("discord_id", discord_id);
+  }
+
+  /**
+   * Get all RPG players for a user
+   */
+  async getUserRPGProfiles(userId: string): Promise<RPGPlayer[]> {
+    return await this.query()
+      .where('user_id', '=', userId)
+      .orderBy('created_at', 'DESC')
+      .all();
+  }
+
+  /**
+   * Find RPG profiles by name (case-insensitive)
+   */
+  async findRPGProfilesByName(userId: string, searchTerm: string): Promise<RPGPlayer[]> {
+    return await this.collection.find({
+      user_id: userId,
+      name: { $regex: searchTerm, $options: 'i' }
+    }).toArray();
+  }
+
+  /**
+   * Update player experience
+   */
+  async updatePlayerExperience(playerId: string, experience: number): Promise<boolean> {
+    return await this.update(playerId, {
+      experience,
+      updated_at: new Date()
+    } as any);
+  }
+
+  async updatePlayerClass(playerId: ObjectId, rpgClass: RPGClass): Promise<boolean> {
+    return await this.update(playerId, {
+      rpgClass,
+      updated_at: new Date()
+    } as any);
+  }
+
+  async updatePlayer(docId: ObjectId, player: Partial<RPGPlayer>): Promise<boolean> {
+    return await this.update(docId, {
+      ...player,
+      updated_at: new Date()
+    } as any);
+  }
+
+  async updatePlayerHealth(playerId: string, health: number): Promise<boolean> {
+    return await this.update(playerId, {
+      health,
+      updated_at: new Date()
+    } as any);
+  }
 }

@@ -18,7 +18,7 @@ import { ButtonStyle, MessageFlags } from "discord.js";
 import { z } from "zod";
 import type { Plugin, PluginContext } from "@types";
 import type { CoreUtilsAPI } from "../core-utils/plugin";
-import { createRPGProfileRepository, initDatabase } from "./db/repository";
+import { createRPGProfileRepository } from "./db/repository";
 import { rpgMenuCommand } from "./commands";
 import { StatisticsAPI } from "plugins/statistics/plugin";
 
@@ -83,7 +83,6 @@ const plugin: Plugin<typeof configSchema> = {
     const api = coreUtils.api;
 
     // Initialize database and create repository
-    await initDatabase(ctx);
     const rpgProfileRepo = createRPGProfileRepository(ctx, api);
 
     // ============ Register Commands ============
