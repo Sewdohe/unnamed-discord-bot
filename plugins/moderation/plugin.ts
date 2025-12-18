@@ -74,7 +74,34 @@ const configSchema = z.object({
       })).default([]).describe("Category-specific thresholds (override global)"),
     })).default([]).describe("Warning categories with specific thresholds"),
     dmOnThresholdAction: z.boolean().default(true).describe("DM users when a threshold action is triggered"),
-  }).default({}).describe("Warning threshold and escalation settings"),
+  }).default({
+    globalThresholds: [{
+      count: 3,
+      action: "timeout",
+      duration: "1h",
+    }, {
+      count: 5,
+      action: "kick",
+    }, {
+      count: 7,
+      action: "ban",
+    }],
+    decay: {
+      enabled: true,
+      days: 30,
+    },
+    categories: [
+      {
+        id: "spam",
+        name: "Spam",
+        thresholds: [{
+          count: 2,
+          action: "timeout",
+          duration: "30m",
+        }],
+      }],
+    dmOnThresholdAction: true,
+  }).describe("Warning threshold and escalation settings"),
 }).describe("Moderation plugin configuration");
 
 type ModConfig = z.infer<typeof configSchema>;
