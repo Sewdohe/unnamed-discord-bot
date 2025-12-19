@@ -92,7 +92,7 @@ const plugin: Plugin<typeof configSchema> = {
             .setName("add-role")
             .setDescription("Add a role-emoji mapping to a reaction role message")
             .addStringOption(opt =>
-              opt.setName("message-id").setDescription("Message ID of the reaction role message").setRequired(true)
+              opt.setName("message-id").setDescription("Message ID of the reaction role message").setRequired(true).setAutocomplete(true)
             )
             .addRoleOption(opt =>
               opt.setName("role").setDescription("Role to assign").setRequired(true)
@@ -106,7 +106,7 @@ const plugin: Plugin<typeof configSchema> = {
             .setName("remove-role")
             .setDescription("Remove a role-emoji mapping from a reaction role message")
             .addStringOption(opt =>
-              opt.setName("message-id").setDescription("Message ID of the reaction role message").setRequired(true)
+              opt.setName("message-id").setDescription("Message ID of the reaction role message").setRequired(true).setAutocomplete(true)
             )
             .addStringOption(opt =>
               opt.setName("emoji").setDescription("Emoji to remove").setRequired(true)
@@ -117,7 +117,7 @@ const plugin: Plugin<typeof configSchema> = {
             .setName("delete")
             .setDescription("Delete a reaction role message")
             .addStringOption(opt =>
-              opt.setName("message-id").setDescription("Message ID of the reaction role message").setRequired(true)
+              opt.setName("message-id").setDescription("Message ID of the reaction role message").setRequired(true).setAutocomplete(true)
             )
         )
         .addSubcommand(sub =>
@@ -462,6 +462,41 @@ const plugin: Plugin<typeof configSchema> = {
           }
         } catch (error) {
           ctx.logger.error("Error handling reaction remove:", error);
+        }
+      },
+    });
+
+    // Handle autocomplete for message-id options
+    ctx.registerEvent({
+      name: "interactionCreate",
+      async execute(ctx, interaction) {
+        if (!interaction.isAutocomplete()) return;
+        if (interaction.commandName !== "reaction-roles") return;
+
+        const focusedOption = interaction.options.getFocused(true);
+
+        if (focusedOption.name === "message-id") {
+          try {
+            // Get all reaction role messages for this guild
+            const reactionRoles = await reactionRoleRepo.findByGuildId(interaction.guildId!);
+
+            // Filter based on user input
+            const filtered = reactionRoles.filter(rr =>
+              rr.title.toLowerCase().includes(focusedOption.value.toLowerCase()) ||
+              rr.message_id.includes(focusedOption.value)
+            );
+
+            // Return up to 25 results (Discord limit)
+            await interaction.respond(
+              filtered.slice(0, 25).map(rr => ({
+                name: `${rr.title} (${rr.role_mappings.length} roles)`,
+                value: rr.message_id,
+              }))
+            );
+          } catch (error) {
+            ctx.logger.error("Error handling autocomplete:", error);
+            await interaction.respond([]);
+          }
         }
       },
     });
