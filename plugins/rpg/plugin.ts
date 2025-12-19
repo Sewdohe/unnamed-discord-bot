@@ -90,7 +90,7 @@ const plugin: Plugin<typeof configSchema> = {
 
     // ============ Register UI Components ============
     // Example: Interactive buttons for item actions
-    api.components.define(ctx, {
+    api.components.defineButtonGroup(ctx, {
       id: "manage-profile",
       scope: "message", // Scoped to specific messages
       components: [
