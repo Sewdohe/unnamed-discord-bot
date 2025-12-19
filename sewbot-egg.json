@@ -4,16 +4,16 @@
       "version": "PTDL_v2",
       "update_url": null
    },
-   "exported_at": "2024-12-19T10:00:00+00:00",
-   "name": "Sewbot",
-   "author": "sewdohe@divnectar.com",
-   "description": "A blazing fast Discord bot written in Typescript and uses bun.",
+   "exported_at": "2024-12-19T22:00:00+00:00",
+   "name": "Bun Discord Bot (Victory)",
+   "author": "user@example.com",
+   "description": "Fixed permission denied installer and startup variable syntax.",
    "features": null,
    "docker_images": {
-      "ghcr.io/zastinian/bun:latest": "ghcr.io/zastinian/bun:latest"
+      "Bun (Latest)": "ghcr.io/parkervcp/yolks:bun_latest"
    },
    "file_denylist": [],
-   "startup": "if [ -d .git ]; then git pull; fi; bun install && bun run {{RUN_COMMAND}}",
+   "startup": "if [ -d .git ]; then git pull; else git clone {{GIT_REPO}} .; fi; bun install && {{RUN_COMMAND}}",
    "config": {
       "files": "{}",
       "startup": "{\r\n    \"done\": \"Logged in as\"\r\n}",
@@ -22,15 +22,15 @@
    },
    "scripts": {
       "installation": {
-         "script": "#!/bin/bash\r\n# Bun Discord Bot Installation Script\r\n\r\napk add --no-cache git curl\r\n\r\ncd /mnt/server\r\n\r\nif [ -z \"${GIT_REPO}\" ]; then\r\n    GIT_REPO=\"https://github.com/Sewdohe/unnamed-discord-bot\"\r\nfi\r\n\r\necho -e \"Cloning repository: ${GIT_REPO}\"\r\ngit clone ${GIT_REPO} .\r\n\r\necho -e \"Installing dependencies with Bun...\"\r\n/usr/local/bin/bun install\r\n\r\necho -e \"Installation complete.\"",
-         "container": "ghcr.io/zastinian/bun:latest",
+         "script": "#!/bin/bash\r\n# Use absolute path for safety\r\ncd /mnt/server\r\nif [ ! -d .git ]; then\r\n    /usr/bin/git clone ${GIT_REPO} .\r\nfi\r\n/usr/local/bin/bun install",
+         "container": "ghcr.io/parkervcp/yolks:bun_latest",
          "entrypoint": "bash"
       }
    },
    "variables": [
       {
          "name": "Git Repository",
-         "description": "The URL of the git repository to clone.",
+         "description": "The URL of the git repository.",
          "env_variable": "GIT_REPO",
          "default_value": "https://github.com/Sewdohe/unnamed-discord-bot",
          "user_viewable": true,
@@ -39,7 +39,7 @@
       },
       {
          "name": "Run Command",
-         "description": "The command used to start the bot.",
+         "description": "Command to start (e.g. bun run dev).",
          "env_variable": "RUN_COMMAND",
          "default_value": "bun run dev",
          "user_viewable": true,
