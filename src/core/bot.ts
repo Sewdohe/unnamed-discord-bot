@@ -10,7 +10,7 @@ import {
 } from "discord.js";
 import type { Command, PluginContext } from "../types/";
 import { createLogger } from "./logger";
-import { initDatabase } from "./database";
+import { initDatabase, closeDatabase } from "./database";
 import { PluginLoader } from "./plugin-loader";
 
 const logger = createLogger("bot");
@@ -162,6 +162,29 @@ export class Bot {
       }
     } catch (error) {
       logger.error("Failed to register commands:", error);
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    logger.info("Graceful shutdown initiated...");
+
+    try {
+      // Unload all plugins (calls onUnload for each)
+      if (this.pluginLoader) {
+        await this.pluginLoader.unloadAll();
+      }
+
+      // Close database connection
+      await closeDatabase();
+
+      // Destroy Discord client
+      this.client.destroy();
+      logger.info("Discord client destroyed");
+
+      logger.info("Graceful shutdown complete");
+    } catch (error) {
+      logger.error("Error during shutdown:", error);
+      throw error;
     }
   }
 }

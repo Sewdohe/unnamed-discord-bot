@@ -319,4 +319,28 @@ export class PluginLoader {
   getContext(pluginName: string): PluginContext | undefined {
     return this.plugins.get(pluginName)?.context;
   }
+
+  async unloadAll(): Promise<void> {
+    logger.info("Unloading all plugins...");
+
+    // Unload in reverse order (opposite of load order)
+    const plugins = Array.from(this.plugins.entries()).reverse();
+
+    for (const [name, loaded] of plugins) {
+      const { plugin } = loaded;
+
+      if (plugin.onUnload) {
+        try {
+          logger.debug(`Unloading plugin: ${name}`);
+          await plugin.onUnload();
+          logger.debug(`Unloaded plugin: ${name}`);
+        } catch (error) {
+          logger.error(`Error unloading plugin ${name}:`, error);
+        }
+      }
+    }
+
+    this.plugins.clear();
+    logger.info("All plugins unloaded");
+  }
 }
