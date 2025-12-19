@@ -152,7 +152,7 @@ export function createTicketsRepo(
   api: CoreUtilsAPI
 ): TicketsRepository {
   // Get MongoDB collection (automatically created on first insert)
-  const collection = api.database.getCollection<SupportTicket>(ctx, 'items');
+  const collection = api.database.getCollection<SupportTicket>(ctx, 'tickets');
 
   // Create indexes for better query performance
   // Unique index prevents duplicate item names per user

@@ -27,6 +27,7 @@ export class Bot {
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMessageReactions,
       ],
     });
   }

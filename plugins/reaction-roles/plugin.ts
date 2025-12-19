@@ -65,6 +65,46 @@ const plugin: Plugin<typeof configSchema> = {
     // Create repository
     const reactionRoleRepo = createReactionRoleRepo(ctx, api);
 
+    // ============ Helper Functions ============
+
+    /**
+     * Update a reaction role message embed to show current role mappings
+     */
+    async function updateReactionRoleEmbed(messageId: string): Promise<void> {
+      try {
+        const reactionRole = await reactionRoleRepo.findByMessageId(messageId);
+        if (!reactionRole) return;
+
+        const channel = await ctx.client.channels.fetch(reactionRole.channel_id);
+        if (!channel || !channel.isTextBased()) return;
+
+        const message = await channel.messages.fetch(messageId);
+
+        // Build the description with role mappings
+        let description = reactionRole.description + "\n\n";
+
+        if (reactionRole.role_mappings.length > 0) {
+          description += "**Available Roles:**\n";
+          description += reactionRole.role_mappings
+            .map(m => `${m.emoji} - <@&${m.roleId}>`)
+            .join("\n");
+        } else {
+          description += "*No roles configured yet*";
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle(reactionRole.title)
+          .setDescription(description)
+          .setColor(0x5865f2)
+          .setFooter({ text: "React below to get your roles!" })
+          .setTimestamp();
+
+        await message.edit({ embeds: [embed] });
+      } catch (error) {
+        ctx.logger.error("Error updating reaction role embed:", error);
+      }
+    }
+
     // ============ Commands ============
 
     ctx.registerCommand({
@@ -219,6 +259,9 @@ const plugin: Plugin<typeof configSchema> = {
               // Add the role mapping
               await reactionRoleRepo.addRoleMapping(messageId, emoji, role.id);
 
+              // Update the embed to show the new role mapping
+              await updateReactionRoleEmbed(messageId);
+
               // Fetch the message and add the reaction
               try {
                 const channel = await ctx.client.channels.fetch(reactionRole.channel_id);
@@ -254,6 +297,9 @@ const plugin: Plugin<typeof configSchema> = {
               const success = await reactionRoleRepo.removeRoleMapping(messageId, emoji);
 
               if (success) {
+                // Update the embed to reflect the removed role mapping
+                await updateReactionRoleEmbed(messageId);
+
                 await interaction.reply({
                   content: `✅ Removed role mapping for emoji ${emoji}`,
                   flags: MessageFlags.Ephemeral,
