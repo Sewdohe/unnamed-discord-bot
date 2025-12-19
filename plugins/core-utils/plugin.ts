@@ -71,6 +71,7 @@ export interface CoreUtilsAPI {
   confirm: ConfirmFunction;
   database: DatabaseHelpers;
   scheduler: SchedulerAPI;
+  utils: UtilsHelpers;
   getDefaultStats?: () => DefaultStats;
 }
 
@@ -135,6 +136,17 @@ interface EmbedHelpers {
   warning(description: string, title?: string): EmbedBuilder;
   error(description: string, title?: string): EmbedBuilder;
   info(description: string, title?: string): EmbedBuilder;
+}
+
+interface UtilsHelpers {
+  /**
+   * Change a user's nickname in a guild
+   * @param member The guild member to update
+   * @param nickname The new nickname (or null to remove nickname)
+   * @param reason Optional reason for audit log
+   * @returns Promise that resolves when nickname is changed
+   */
+  setNickname(member: GuildMember, nickname: string | null, reason?: string): Promise<GuildMember>;
 }
 
 interface PaginateOptions<T> {
@@ -248,11 +260,11 @@ interface SelectMenuUIGroupDescriptor extends UIGroupDescriptorBase {
   filter?: (interaction: AnySelectMenuInteraction) => boolean;
 }
 
-export interface ModalGroupDescriptor {
-  id: string; // The modal's customId
+export interface ModalGroupDescriptor extends UIGroupDescriptorBase {
   title: string;
   components: TextInputDescriptor[];
   handler: (ctx: PluginContext, interaction: ModalSubmitInteraction, meta: { pluginName: string; groupId: string; }) => Promise<void>;
+  filter?: (interaction: ModalSubmitInteraction) => boolean;
 }
 
 type UIGroupDescriptor = (ButtonUIGroupDescriptor | SelectMenuUIGroupDescriptor | ModalGroupDescriptor) & { type?: 'button' | 'select' | 'modal' };
@@ -369,6 +381,7 @@ const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
       confirm: createConfirmFunction(ctx),
       database: createDatabaseHelpers(),
       scheduler,
+      utils: createUtilsHelpers(),
       getDefaultStats: () => defaultStatsTracker.getStats(),
     };
 
@@ -587,6 +600,16 @@ function createEmbedHelpers(ctx: PluginContext<CoreUtilsConfig>): EmbedHelpers {
         .setDescription(description);
       if (title) embed.setTitle(title);
       return applyDefaults(embed);
+    },
+  };
+}
+
+// ============ Utils ============
+
+function createUtilsHelpers(): UtilsHelpers {
+  return {
+    async setNickname(member: GuildMember, nickname: string | null, reason?: string): Promise<GuildMember> {
+      return await member.setNickname(nickname, reason);
     },
   };
 }
@@ -1072,14 +1095,14 @@ function createComponentsHelpers(): ComponentsHelpers {
       const collector = message.createMessageComponentCollector({ time: timeout });
       collector.on("collect", async (i) => {
         try {
-          if (filter && !filter(i)) {
+          if (filter && !filter(i as any)) {
             await i.reply({ content: "This interaction isn't for you.", flags: MessageFlags.Ephemeral });
             return;
           }
           // Extract component id
           const parsed = parseNamespacedId(i.customId ?? "");
           if (!parsed) return;
-          await descriptor.handler(pluginCtx as any, i, { pluginName: parsed.pluginName, groupId: parsed.groupId, componentId: parsed.componentId });
+          await descriptor.handler(pluginCtx as any, i as any, { pluginName: parsed.pluginName, groupId: parsed.groupId, componentId: parsed.componentId });
         } catch (e) {
           try { pluginCtx.logger.error("Error in UI handler:", e); } catch {}
         }

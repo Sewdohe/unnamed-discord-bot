@@ -1,0 +1,50 @@
+{
+   "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+   "meta": {
+      "version": "PTDL_v2",
+      "update_url": null
+   },
+   "exported_at": "2024-12-19T10:00:00+00:00",
+   "name": "Sewbot",
+   "author": "sewdohe@divnectar.com",
+   "description": "A blazing fast Discord bot written in Typescript and uses bun.",
+   "features": null,
+   "docker_images": {
+      "ghcr.io/zastinian/bun:latest": "ghcr.io/zastinian/bun:latest"
+   },
+   "file_denylist": [],
+   "startup": "if [ -d .git ]; then git pull; fi; bun install && bun run {{RUN_COMMAND}}",
+   "config": {
+      "files": "{}",
+      "startup": "{\r\n    \"done\": \"Logged in as\"\r\n}",
+      "logs": "{}",
+      "stop": "^C"
+   },
+   "scripts": {
+      "installation": {
+         "script": "#!/bin/bash\r\n# Bun Discord Bot Installation Script\r\n\r\napk add --no-cache git curl\r\n\r\ncd /mnt/server\r\n\r\nif [ -z \"${GIT_REPO}\" ]; then\r\n    GIT_REPO=\"https://github.com/Sewdohe/unnamed-discord-bot\"\r\nfi\r\n\r\necho -e \"Cloning repository: ${GIT_REPO}\"\r\ngit clone ${GIT_REPO} .\r\n\r\necho -e \"Installing dependencies with Bun...\"\r\n/usr/local/bin/bun install\r\n\r\necho -e \"Installation complete.\"",
+         "container": "ghcr.io/zastinian/bun:latest",
+         "entrypoint": "bash"
+      }
+   },
+   "variables": [
+      {
+         "name": "Git Repository",
+         "description": "The URL of the git repository to clone.",
+         "env_variable": "GIT_REPO",
+         "default_value": "https://github.com/Sewdohe/unnamed-discord-bot",
+         "user_viewable": true,
+         "user_editable": true,
+         "rules": "required|string"
+      },
+      {
+         "name": "Run Command",
+         "description": "The command used to start the bot.",
+         "env_variable": "RUN_COMMAND",
+         "default_value": "bun run dev",
+         "user_viewable": true,
+         "user_editable": true,
+         "rules": "required|string"
+      }
+   ]
+}

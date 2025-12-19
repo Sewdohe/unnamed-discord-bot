@@ -1,6 +1,6 @@
 # Discord Bot
 
-A plugin-based Discord bot built with Discord.js, TypeScript, and Bun.
+A plugin-based Discord bot built with Discord.js, TypeScript, and Bun. Blazing fast, super extensible, and sanely built. Sewbot provides your sever with all the features a Discord guild needs, and with some they don'! Missing a feature? Check out the plugin development guide!
 
 ## Getting Started
 

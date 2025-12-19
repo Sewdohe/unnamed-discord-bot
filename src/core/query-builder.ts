@@ -30,6 +30,13 @@ export class MongoQueryBuilder<T extends Document> implements IQueryBuilder<T> {
   }
 
   /**
+   * Add a WHERE condition with explicit AND conjunction (same as where)
+   */
+  whereAnd(field: string, operator: WhereOperator, value: unknown): this {
+    return this.where(field, operator, value);
+  }
+
+  /**
    * Add a WHERE condition with OR conjunction
    */
   whereOr(field: string, operator: WhereOperator, value: unknown): this {
