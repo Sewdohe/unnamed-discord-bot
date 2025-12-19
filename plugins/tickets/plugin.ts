@@ -14,7 +14,7 @@
  * Use this as a starting point for your own plugins!
  */
 
-import { ButtonStyle, EmbedBuilder, MessageFlags, SelectMenuOptionBuilder } from "discord.js";
+import { TextChannel, SlashCommandBuilder, ButtonStyle, EmbedBuilder, MessageFlags, SelectMenuOptionBuilder, StringSelectMenuInteraction, Message } from "discord.js";
 import { z } from "zod";
 import type { Plugin, PluginContext } from "@types";
 import type { CoreUtilsAPI } from "../core-utils/plugin";
@@ -33,11 +33,10 @@ const configSchema = z.object({
 
   categories: z.array(z.object({
     name: z.string().describe("Name for the category"),
-    channelID: z.string().describe("Discord Channel ID for the category. This is where tickets will be created under."),
+    channelID: z.string().describe("Discord Channel ID where the ticket panel will be created."),
+    categoryID: z.string().describe("Discord Category ID where tickets will be created."),
   })).default([
-    { name: "General Support", channelID: "" },
-    { name: "Billing", channelID: "" },
-    { name: "Technical Issues", channelID: "" },
+    { name: "General Support", channelID: "1450874566166712350", categoryID: "1451402044358266981" },
   ]).describe("Configurable ticket categories"),
 
   // Nested configuration example
@@ -76,9 +75,7 @@ const plugin: Plugin<typeof configSchema> = {
     defaults: {
       enabled: true,
       categories: [
-        { name: "General Support", channelID: "" },
-        { name: "Billing", channelID: "" },
-        { name: "Technical Issues", channelID: "" },
+        { name: "General Support", channelID: "1450874566166712350", categoryID: "1451402044358266981" },
       ],
       features: {
         enableThis: true,
@@ -108,7 +105,7 @@ const plugin: Plugin<typeof configSchema> = {
     const itemRepo = createTicketsRepo(ctx, api);
 
     // ============ Define UI Components ============
-    api.components.define(ctx, {
+    api.components.defineSelectMenuGroup(ctx, {
       id: "ticket-category-select",
       scope: "global",
       components: [{
@@ -123,9 +120,92 @@ const plugin: Plugin<typeof configSchema> = {
         disabled: false,
       }],
       async handler(pluginCtx, interaction) {
-        ctx.logger.info(`Ineraction looks like this for select menu: ${interaction.valueOf()}`);
-        await interaction.reply({ content: `You selected: ${interaction.valueOf()}`, flags: MessageFlags.Ephemeral } );
+        const categoryName = interaction.values[0];
+        const category = ctx.config.categories.find(c => c.name === categoryName);
+
+        if (!category || !category.channelID) {
+            await interaction.reply({ content: "This category is not configured correctly. Please contact an admin.", flags: MessageFlags.Ephemeral });
+            return;
+        }
+
+        try {
+            const channel = await ctx.client.channels.fetch(category.channelID);
+            if (!channel || !channel.isTextBased()) {
+                await interaction.reply({ content: "The configured channel for this category could not be found or is not a text channel.", flags: MessageFlags.Ephemeral });
+                return;
+            }
+
+            const panelEmbed = new EmbedBuilder()
+                .setTitle("Support Tickets")
+                .setDescription(`To open a ticket in the **${category.name}** category, please click the button below.`)
+                .setColor("Blue");
+
+            const actionBar = api.components.build(ctx, "ticket-action-bar");
+
+            await (channel as TextChannel).send({
+                embeds: [panelEmbed],
+                components: actionBar,
+            });
+
+            await interaction.reply({ content: `Ticket panel for '${category.name}' has been sent to ${channel}.`, flags: MessageFlags.Ephemeral });
+
+        } catch (error) {
+            ctx.logger.error(`Failed to send ticket panel for category ${categoryName}:`, error);
+            await interaction.reply({ content: "An error occurred while trying to send the ticket panel. Please check my permissions.", flags: MessageFlags.Ephemeral });
+        }
       }
+    });
+
+    // Define a sample modal for creating tickets
+    const createTicketModal = api.components.defineModal(ctx, {
+      id: "create-ticket-modal",
+      title: "Create New Ticket",
+      components: [
+        {
+          customId: "ticket-subject",
+          label: "Subject",
+          style: "Short",
+          required: true,
+          placeholder: "Briefly describe the purpose of your ticket.",
+        },
+        {
+          customId: "ticket-description",
+          label: "Description",
+          style: "Paragraph",
+          required: false,
+          placeholder: "Provide more details here (optional).",
+        },
+      ],
+      async handler(pluginCtx, interaction) {
+        const subject = interaction.fields.getTextInputValue("ticket-subject");
+        const description = interaction.fields.getTextInputValue("ticket-description");
+
+        ctx.logger.info(`New ticket created by ${interaction.user.tag}. Subject: ${subject}, Description: ${description}`);
+
+        // In a real scenario, you'd create a new ticket channel, log to DB, etc.
+        await interaction.reply({
+          content: `Your ticket for "${subject}" has been submitted! We'll get back to you shortly.`,
+          flags: MessageFlags.Ephemeral,
+        });
+      },
+    });
+
+    // Define the action bar for the ticket panel
+    api.components.defineButtonGroup(ctx, {
+        id: "ticket-action-bar",
+        scope: "global",
+        components: [
+            {
+                customId: "create-ticket",
+                label: "Create Ticket",
+                style: ButtonStyle.Success,
+                emoji: "➕",
+            },
+        ],
+        async handler(pluginCtx, interaction) {
+            // Show the modal when the "Create Ticket" button is clicked
+            await interaction.showModal(createTicketModal);
+        }
     });
 
     // ============ Register Commands ============

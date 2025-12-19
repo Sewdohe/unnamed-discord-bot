@@ -123,7 +123,7 @@ const plugin: Plugin<typeof configSchema> = {
     await initDatabase(ctx);
 
     // Define verification button UI (global scope - persists across restarts)
-    api.components.define(ctx, {
+    api.components.defineButtonGroup(ctx, {
       id: "verification-panel",
       scope: "global",
       components: [

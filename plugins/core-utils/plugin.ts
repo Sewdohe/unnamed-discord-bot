@@ -20,6 +20,8 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  AnySelectMenuInteraction,
+  ModalSubmitInteraction,
 } from "discord.js";
 import { z } from "zod";
 import type { Plugin, PluginContext, QueryBuilder, SchemaValidator } from "@types";
@@ -212,8 +214,10 @@ interface ComponentsHelpers {
    * Accepts a single ActionRowBuilder or an array and always returns an array.
    */
   disableAll(rows: ActionRowBuilder<any> | ActionRowBuilder<any>[]): ActionRowBuilder<any>[];
-  // Define a UI group (declare components and a handler together). The plugin should pass its PluginContext.
-  define(pluginCtx: PluginContext, descriptor: UIGroupDescriptor): UIRegistration;
+  // Define UI groups
+  defineButtonGroup(pluginCtx: PluginContext, descriptor: ButtonUIGroupDescriptor): UIRegistration;
+  defineSelectMenuGroup(pluginCtx: PluginContext, descriptor: SelectMenuUIGroupDescriptor): UIRegistration;
+  defineModal(pluginCtx: PluginContext, descriptor: ModalGroupDescriptor): ModalBuilder;
   // Build the ActionRowBuilders for a defined group
   build(pluginCtx: PluginContext, groupId: string): ActionRowBuilder<any>[];
   // Send a message using a defined group and attach a per-message collector that dispatches to the group's handler
@@ -225,15 +229,34 @@ interface ComponentsHelpers {
 // DSL types
 type UIScope = "message" | "global";
 
-interface UIGroupDescriptor {
-  id: string; // group id
-  scope?: UIScope; // message by default
-  components: Array<ButtonDescriptor | StringSelectMenuDescriptor | GenericSelectMenuDescriptor>;
-  handler: (ctx: PluginContext, interaction: MessageComponentInteraction, meta: { pluginName: string; groupId: string; componentId: string }) => Promise<void>;
-  filter?: (interaction: MessageComponentInteraction) => boolean;
+interface UIGroupDescriptorBase {
+  id: string;
+  scope?: UIScope;
   timeout?: number;
   autoDisable?: boolean;
 }
+
+interface ButtonUIGroupDescriptor extends UIGroupDescriptorBase {
+  components: ButtonDescriptor[];
+  handler: (ctx: PluginContext, interaction: ButtonInteraction, meta: { pluginName: string; groupId: string; componentId: string }) => Promise<void>;
+  filter?: (interaction: ButtonInteraction) => boolean;
+}
+
+interface SelectMenuUIGroupDescriptor extends UIGroupDescriptorBase {
+  components: (StringSelectMenuDescriptor | GenericSelectMenuDescriptor)[];
+  handler: (ctx: PluginContext, interaction: AnySelectMenuInteraction, meta: { pluginName: string; groupId: string; componentId: string }) => Promise<void>;
+  filter?: (interaction: AnySelectMenuInteraction) => boolean;
+}
+
+export interface ModalGroupDescriptor {
+  id: string; // The modal's customId
+  title: string;
+  components: TextInputDescriptor[];
+  handler: (ctx: PluginContext, interaction: ModalSubmitInteraction, meta: { pluginName: string; groupId: string; }) => Promise<void>;
+}
+
+type UIGroupDescriptor = (ButtonUIGroupDescriptor | SelectMenuUIGroupDescriptor | ModalGroupDescriptor) & { type?: 'button' | 'select' | 'modal' };
+
 
 interface UIRegistration {
   pluginName: string;
@@ -373,20 +396,36 @@ const plugin: Plugin<typeof configSchema> & { api?: CoreUtilsAPI } = {
     ctx.registerEvent({
       name: "interactionCreate",
       async execute(pluginCtx, interaction) {
-        if (!(interaction.isButton?.() || interaction.isStringSelectMenu?.())) return;
+        if (!interaction.isMessageComponent() && !interaction.isModalSubmit()) return;
+
         const customId = interaction.customId;
         if (!customId) return;
+
         const parsed = parseNamespacedId(customId);
         if (!parsed) return;
+
         const groups = uiRegistry.get(parsed.pluginName);
         if (!groups) return;
-        const reg = groups.get(parsed.groupId);
-        if (!reg) return;
-        // only global-scope groups should reach here
-        if ((reg.scope ?? "message") !== "global") return;
-        if (reg.filter && !reg.filter(interaction)) return;
+
+        const descriptor = groups.get(parsed.groupId);
+        if (!descriptor) return;
+
         try {
-          await reg.handler(pluginCtx as any, interaction, { pluginName: parsed.pluginName, groupId: parsed.groupId, componentId: parsed.componentId });
+          if (interaction.isButton() && descriptor.type === 'button') {
+            if ((descriptor as ButtonUIGroupDescriptor).scope !== 'global') return;
+            const buttonDescriptor = descriptor as ButtonUIGroupDescriptor;
+            if (buttonDescriptor.filter && !buttonDescriptor.filter(interaction)) return;
+            await buttonDescriptor.handler(pluginCtx as any, interaction, { pluginName: parsed.pluginName, groupId: parsed.groupId, componentId: parsed.componentId });
+          } else if (interaction.isAnySelectMenu() && descriptor.type === 'select') {
+            if ((descriptor as SelectMenuUIGroupDescriptor).scope !== 'global') return;
+            const selectDescriptor = descriptor as SelectMenuUIGroupDescriptor;
+            if (selectDescriptor.filter && !selectDescriptor.filter(interaction)) return;
+            await selectDescriptor.handler(pluginCtx as any, interaction, { pluginName: parsed.pluginName, groupId: parsed.groupId, componentId: parsed.componentId });
+          } else if (interaction.isModalSubmit() && descriptor.type === 'modal') {
+            const modalDescriptor = descriptor as ModalGroupDescriptor;
+            // Modals are inherently global and don't have a 'scope' in their descriptor
+            await modalDescriptor.handler(pluginCtx as any, interaction, { pluginName: parsed.pluginName, groupId: parsed.groupId });
+          }
         } catch (e) {
           try { pluginCtx.logger.error("Error dispatching UI handler:", e); } catch {}
         }
@@ -911,7 +950,7 @@ function createComponentsHelpers(): ComponentsHelpers {
         return newRow;
       });
     },
-    define(pluginCtx, descriptor) {
+    defineButtonGroup(pluginCtx, descriptor) {
       const pluginName = String(pluginCtx.dbPrefix ?? "");
       if (!pluginName) throw new Error("Plugin must have a manifest name to define UI groups");
       let pluginGroups = uiRegistry.get(pluginName);
@@ -919,13 +958,51 @@ function createComponentsHelpers(): ComponentsHelpers {
         pluginGroups = new Map();
         uiRegistry.set(pluginName, pluginGroups);
       }
-      pluginGroups.set(descriptor.id, descriptor);
+      const newDescriptor: UIGroupDescriptor = { ...descriptor, type: 'button' };
+      pluginGroups.set(descriptor.id, newDescriptor);
       return {
         pluginName,
         groupId: descriptor.id,
-        descriptor,
+        descriptor: newDescriptor,
         build: () => this.build(pluginCtx, descriptor.id),
       } as UIRegistration;
+    },
+    defineSelectMenuGroup(pluginCtx, descriptor) {
+      const pluginName = String(pluginCtx.dbPrefix ?? "");
+      if (!pluginName) throw new Error("Plugin must have a manifest name to define UI groups");
+      let pluginGroups = uiRegistry.get(pluginName);
+      if (!pluginGroups) {
+        pluginGroups = new Map();
+        uiRegistry.set(pluginName, pluginGroups);
+      }
+      const newDescriptor: UIGroupDescriptor = { ...descriptor, type: 'select' };
+      pluginGroups.set(descriptor.id, newDescriptor);
+      return {
+        pluginName,
+        groupId: descriptor.id,
+        descriptor: newDescriptor,
+        build: () => this.build(pluginCtx, descriptor.id),
+      } as UIRegistration;
+    },
+    defineModal(pluginCtx, descriptor) {
+      const pluginName = String(pluginCtx.dbPrefix ?? "");
+      if (!pluginName) throw new Error("Plugin must have a manifest name to define UI groups");
+      let pluginGroups = uiRegistry.get(pluginName);
+      if (!pluginGroups) {
+        pluginGroups = new Map();
+        uiRegistry.set(pluginName, pluginGroups);
+      }
+      const finalId = descriptor.id.includes(":") ? descriptor.id : namespacedId(pluginName, descriptor.id, 'modal');
+      const newDescriptor: UIGroupDescriptor = { ...descriptor, id: finalId, type: 'modal' };
+      pluginGroups.set(descriptor.id, newDescriptor);
+
+      // Return a modal builder
+      const modal = new ModalBuilder()
+        .setCustomId(finalId)
+        .setTitle(descriptor.title);
+      const rows = descriptor.components.map(c => new ActionRowBuilder<TextInputBuilder>().addComponents(this.textInput(c)));
+      modal.addComponents(...rows);
+      return modal;
     },
     build(pluginCtx, groupId) {
       const pluginName = String(pluginCtx.dbPrefix ?? "");
