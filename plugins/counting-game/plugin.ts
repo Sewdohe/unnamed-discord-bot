@@ -64,6 +64,11 @@ type CountingConfig = z.infer<typeof configSchema>;
 
 // ============ Plugin Definition ============
 
+// ============ Plugin State (for onUnload access) ============
+let pluginCtx: PluginContext<CountingConfig> | null = null;
+let pluginApi: CoreUtilsAPI | null = null;
+let pluginGameRepo: ReturnType<typeof createGameRepo> | null = null;
+
 const plugin: Plugin<typeof configSchema> = {
   // ============ Manifest ============
   manifest: {
@@ -117,6 +122,11 @@ const plugin: Plugin<typeof configSchema> = {
     const gameRepo = createGameRepo(ctx, api);
     const statsRepo = createStatsRepo(ctx, api);
 
+    // Store references for onUnload
+    pluginCtx = ctx;
+    pluginApi = api;
+    pluginGameRepo = gameRepo;
+
     // ============ Register Commands ============
     ctx.registerCommand(createCountingCommand(ctx, api, gameRepo, statsRepo));
 
@@ -130,6 +140,30 @@ const plugin: Plugin<typeof configSchema> = {
       async execute(ctx, client) {
         ctx.logger.info("Counting game plugin ready!");
         ctx.logger.info(`Rules: Alternating=${ctx.config.alternatingAccounts}, AllowTalking=${ctx.config.allowTalking}, ResetOnFail=${ctx.config.resetOnFail}`);
+
+        // Send "Back Online" Status to All Counting Channels
+        try {
+          const allGames = await gameRepo.all();
+          ctx.logger.info(`Sending "back online" status to ${allGames.length} counting channels`);
+
+          for (const game of allGames) {
+            try {
+              const channel = await client.channels.fetch(game.channel_id);
+              if (channel?.isTextBased() && !channel.isDMBased()) {
+                const embed = api.embeds.success(
+                  `🟢 **Sewbot is back online!**\n\nCounting has resumed. Continue from **${game.current_count}**.`,
+                  "Counting Resumed"
+                );
+                await channel.send({ embeds: [embed] });
+                ctx.logger.debug(`Sent "back online" status to channel ${game.channel_id}`);
+              }
+            } catch (error) {
+              ctx.logger.error(`Failed to send "back online" status to channel ${game.channel_id}:`, error);
+            }
+          }
+        } catch (error) {
+          ctx.logger.error("Failed to send 'back online' status embeds:", error);
+        }
       },
     });
 
@@ -168,7 +202,53 @@ const plugin: Plugin<typeof configSchema> = {
 
   // ============ Unload Handler ============
   async onUnload() {
-    // Cleanup if needed
+    if (!pluginCtx || !pluginApi || !pluginGameRepo) {
+      return; // Plugin wasn't fully loaded
+    }
+
+    try {
+      pluginCtx.logger.debug("Starting counting game unload...");
+      const allGames = await pluginGameRepo.all();
+
+      if (allGames.length === 0) {
+        pluginCtx.logger.debug("No counting channels to notify");
+        return;
+      }
+
+      pluginCtx.logger.info(`Sending "going offline" status to ${allGames.length} counting channels`);
+
+      const sendPromises: Promise<void>[] = [];
+
+      for (const game of allGames) {
+        const sendPromise = (async () => {
+          try {
+            const channel = await pluginCtx!.client.channels.fetch(game.channel_id);
+            if (channel?.isTextBased() && !channel.isDMBased()) {
+              const embed = pluginApi!.embeds.warning(
+                `🔴 **Sewbot is going offline. No messages will be counted.**\n\nCounting is currently at **${game.current_count}**. It will resume when Sewbot comes back online.`,
+                "Counting Paused"
+              );
+              await channel.send({ embeds: [embed] });
+              pluginCtx!.logger.debug(`Sent "going offline" status to channel ${game.channel_id}`);
+            }
+          } catch (error) {
+            pluginCtx!.logger.error(`Failed to send "going offline" status to channel ${game.channel_id}:`, error);
+          }
+        })();
+
+        sendPromises.push(sendPromise);
+      }
+
+      // Wait for all messages to send (with timeout)
+      await Promise.race([
+        Promise.all(sendPromises),
+        new Promise(resolve => setTimeout(resolve, 2000)) // 2 second max wait
+      ]);
+
+      pluginCtx.logger.info("Counting game cleanup complete");
+    } catch (error) {
+      pluginCtx?.logger.error("Failed to send 'going offline' status embeds:", error);
+    }
   },
 };
 

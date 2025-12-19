@@ -6,11 +6,21 @@ const logger = createLogger("shutdown");
 
 // Graceful shutdown handlers
 let isShuttingDown = false;
+let shutdownTimeout: NodeJS.Timeout | null = null;
 
 async function handleShutdown(signal: string) {
   if (isShuttingDown) {
-    logger.warn("Force shutdown...");
-    process.exit(1);
+    logger.warn("Already shutting down, please wait...");
+    logger.warn("Press Ctrl+C again to force exit");
+
+    // On second press, give 3 more seconds before force exit
+    if (!shutdownTimeout) {
+      shutdownTimeout = setTimeout(() => {
+        logger.error("Force shutdown timeout reached");
+        process.exit(1);
+      }, 3000);
+    }
+    return;
   }
 
   isShuttingDown = true;
@@ -18,6 +28,7 @@ async function handleShutdown(signal: string) {
 
   try {
     await bot.shutdown();
+    logger.info("Shutdown complete");
     process.exit(0);
   } catch (error) {
     logger.error("Error during shutdown:", error);
