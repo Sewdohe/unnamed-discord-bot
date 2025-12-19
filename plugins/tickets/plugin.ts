@@ -224,6 +224,66 @@ const plugin: Plugin<typeof configSchema> = {
         }
     });
 
+    // Define ticket control buttons (for inside ticket channels)
+    api.components.defineButtonGroup(ctx, {
+        id: "ticket-controls",
+        scope: "global",
+        components: [
+            {
+                customId: "claim-ticket",
+                label: "Claim Ticket",
+                style: ButtonStyle.Primary,
+                emoji: "🙋",
+            },
+            {
+                customId: "close-ticket",
+                label: "Close Ticket",
+                style: ButtonStyle.Danger,
+                emoji: "🔒",
+            },
+        ],
+        async handler(pluginCtx, interaction, meta) {
+            if (meta.componentId === "claim-ticket") {
+                // Claim the ticket
+                try {
+                    await interaction.reply({
+                        content: `✅ ${interaction.user} has claimed this ticket and will assist you.`,
+                    });
+                    ctx.logger.info(`Ticket ${interaction.channelId} claimed by ${interaction.user.tag}`);
+                } catch (error) {
+                    ctx.logger.error("Error claiming ticket:", error);
+                    await interaction.reply({
+                        content: "Failed to claim ticket. Please try again.",
+                        flags: MessageFlags.Ephemeral,
+                    });
+                }
+            } else if (meta.componentId === "close-ticket") {
+                // Close the ticket
+                try {
+                    await interaction.reply({
+                        content: "🔒 This ticket is now closed. The channel will be deleted in 10 seconds.",
+                    });
+
+                    // Delete channel after 10 seconds
+                    setTimeout(async () => {
+                        try {
+                            await interaction.channel?.delete();
+                            ctx.logger.info(`Ticket channel ${interaction.channelId} deleted by ${interaction.user.tag}`);
+                        } catch (error) {
+                            ctx.logger.error("Error deleting ticket channel:", error);
+                        }
+                    }, 10000);
+                } catch (error) {
+                    ctx.logger.error("Error closing ticket:", error);
+                    await interaction.reply({
+                        content: "Failed to close ticket. Please try again.",
+                        flags: MessageFlags.Ephemeral,
+                    });
+                }
+            }
+        }
+    });
+
     // Handle ticket modal submissions
     ctx.registerEvent({
         name: "interactionCreate",
@@ -297,9 +357,12 @@ const plugin: Plugin<typeof configSchema> = {
                     .setTimestamp()
                     .setFooter({ text: `Created by ${interaction.user.tag}` });
 
+                const ticketControls = api.components.build(ctx, "ticket-controls");
+
                 await ticketChannel.send({
                     content: `${interaction.user}, your support ticket has been created! A staff member will assist you shortly.`,
                     embeds: [ticketEmbed],
+                    components: ticketControls,
                 });
 
                 // Confirm to user
