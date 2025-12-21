@@ -151,7 +151,7 @@ const plugin: Plugin<typeof configSchema> = {
               const channel = await client.channels.fetch(game.channel_id);
               if (channel?.isTextBased() && !channel.isDMBased()) {
                 const embed = api.embeds.success(
-                  `🟢 **Sewbot is back online!**\n\nCounting has resumed. Continue from **${game.current_count}**.`,
+                  `🟢 **Navi Bot is back online!**\n\nCounting has resumed. Continue from **${game.current_count}**.`,
                   "Counting Resumed"
                 );
                 await channel.send({ embeds: [embed] });
@@ -225,7 +225,7 @@ const plugin: Plugin<typeof configSchema> = {
             const channel = await pluginCtx!.client.channels.fetch(game.channel_id);
             if (channel?.isTextBased() && !channel.isDMBased()) {
               const embed = pluginApi!.embeds.warning(
-                `🔴 **Sewbot is going offline. No messages will be counted.**\n\nCounting is currently at **${game.current_count}**. It will resume when Sewbot comes back online.`,
+                `🔴 **Navi Bot is going offline. No messages will be counted.**\n\nCounting is currently at **${game.current_count}**. It will resume when Navi Bot comes back online.`,
                 "Counting Paused"
               );
               await channel.send({ embeds: [embed] });

@@ -5,9 +5,9 @@
       "update_url": null
    },
    "exported_at": "2024-12-19T22:00:00+00:00",
-   "name": "Bun Discord Bot (Victory)",
+   "name": "Navi Bot",
    "author": "user@example.com",
-   "description": "Fixed permission denied installer and startup variable syntax.",
+   "description": "Navi Bot - A helpful Discord bot inspired by Navi from The Legend of Zelda. Built with Bun and Discord.js.",
    "features": null,
    "docker_images": {
       "Bun (Latest)": "ghcr.io/parkervcp/yolks:bun_latest"

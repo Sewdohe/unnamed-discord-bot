@@ -55,7 +55,7 @@ Plugins are self-contained modules that extend the bot's functionality without m
 ### Directory Structure
 
 ```
-discord-bot/
+navi-bot/
 ├── src/
 │   ├── core/                 # Framework code (don't modify)
 │   │   ├── bot.ts            # Main bot class

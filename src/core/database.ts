@@ -11,6 +11,7 @@ let database: Db;
  */
 export async function initDatabase(): Promise<Db> {
   const uri = process.env.MONGODB_URI || "mongodb://localhost:27017";
+  const dbName = process.env.MONGODB_DATABASE || "navi-bot";
 
   logger.info(`Connecting to MongoDB at ${uri.split('@')[1] || 'localhost'}`);
 
@@ -22,9 +23,9 @@ export async function initDatabase(): Promise<Db> {
 
   try {
     await mongoClient.connect();
-    database = mongoClient.db("discord-bot");
+    database = mongoClient.db(dbName);
 
-    logger.info("Successfully connected to MongoDB");
+    logger.info(`Successfully connected to MongoDB (database: ${dbName})`);
 
     return database;
   } catch (error) {

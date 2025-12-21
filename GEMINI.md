@@ -21,7 +21,7 @@ The core framework handles Discord client management, plugin loading, command re
 ## Directory Structure
 
 ```
-discord-bot/
+navi-bot/
 ├── src/
 │   ├── core/                   # Framework internals
 │   │   ├── bot.ts              # Main Bot class, command routing, event setup

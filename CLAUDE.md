@@ -1,6 +1,6 @@
-# CLAUDE.md - Discord Bot Framework
+# CLAUDE.md - Navi Bot Framework
 
-This document provides comprehensive context for Claude Code when working on this Discord bot framework. It covers architecture, conventions, common tasks, and implementation patterns.
+This document provides comprehensive context for Claude Code when working on Navi Bot, a Discord bot framework. It covers architecture, conventions, common tasks, and implementation patterns.
 
 ---
 
@@ -21,7 +21,7 @@ The core framework handles Discord client management, plugin loading, command re
 ## Directory Structure
 
 ```
-discord-bot/
+navi-bot/
 ├── src/
 │   ├── core/                   # Framework internals
 │   │   ├── bot.ts              # Main Bot class, command routing, event setup

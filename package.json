@@ -1,6 +1,7 @@
 {
-  "name": "discord-bot",
+  "name": "navi-bot",
   "version": "1.0.0",
+  "description": "Navi Bot - A helpful Discord bot inspired by Navi from The Legend of Zelda",
   "type": "module",
   "scripts": {
     "dev": "bun run --watch src/index.ts",
