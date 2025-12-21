@@ -94,9 +94,26 @@ export function purgeCommand(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, r
       const targetUser = interaction.options.getUser("user");
       const contains = interaction.options.getString("contains");
 
-      api.confirm(interaction, "Are you sure you want to delete messages?");
+      // Show confirmation dialog (ephemeral)
+      const confirmed = await api.confirm(interaction, {
+        message: `Are you sure you want to delete **${amount}** messages${targetUser ? ` from ${targetUser.tag}` : ""}${contains ? ` containing "${contains}"` : ""}?`,
+        title: "⚠️ Confirm Purge",
+        ephemeral: true,
+      });
 
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      if (!confirmed) {
+        await interaction.editReply({
+          embeds: [api.embeds.error("Purge cancelled.")],
+          components: [],
+        });
+        return;
+      }
+
+      // Update the confirmation message to show we're working
+      await interaction.editReply({
+        embeds: [api.embeds.info("Purging messages...")],
+        components: [],
+      });
 
       const channel = interaction.channel as TextChannel;
       const messages = await channel.messages.fetch({ limit: amount });

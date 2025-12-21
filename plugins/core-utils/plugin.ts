@@ -168,6 +168,7 @@ interface ConfirmOptions {
   confirmLabel?: string;
   cancelLabel?: string;
   timeout?: number;
+  ephemeral?: boolean;
 }
 
 type ConfirmFunction = (
@@ -766,11 +767,17 @@ function createConfirmFunction(ctx: PluginContext<CoreUtilsConfig>): ConfirmFunc
         .setStyle(ButtonStyle.Danger),
     );
 
-    const { resource } = await interaction.reply({
+    const replyOptions: any = {
       embeds: [embed],
       components: [row],
       withResponse: true,
-    });
+    };
+
+    if (opts.ephemeral) {
+      replyOptions.flags = MessageFlags.Ephemeral;
+    }
+
+    const { resource } = await interaction.reply(replyOptions);
     const message = resource!.message!;
 
     try {

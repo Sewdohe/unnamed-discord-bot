@@ -170,7 +170,8 @@ export class UserRepository extends BaseRepository<EconomyUser> {
   async awardMessageEarning(guildId: string, userId: string, earnAmount: number, cooldownMs: number): Promise<number | null> {
     const cooldownDate = new Date(Date.now() - cooldownMs);
 
-    const result = await this.collection.findOneAndUpdate(
+    // Try to update existing user that's off cooldown
+    const updateResult = await this.collection.findOneAndUpdate(
       {
         guild_id: guildId,
         user_id: userId,
@@ -180,23 +181,51 @@ export class UserRepository extends BaseRepository<EconomyUser> {
         ],
       },
       {
-        $inc: { balance: earnAmount }, // $inc creates field with value if it doesn't exist
+        $inc: { balance: earnAmount },
         $set: {
           last_earned_at: new Date(),
           updated_at: new Date(),
         },
-        $setOnInsert: {
-          guild_id: guildId,
-          user_id: userId,
-          // Don't set balance here - let $inc handle it
-          created_at: new Date(),
-        },
       },
-      { upsert: true, returnDocument: 'after' }
+      { returnDocument: 'after' }
     );
 
-    // If result is null, user is on cooldown
-    return result?.balance ?? null;
+    // If updated successfully, return new balance
+    if (updateResult) {
+      return updateResult.balance;
+    }
+
+    // Check if user exists (might be on cooldown)
+    const existingUser = await this.collection.findOne({
+      guild_id: guildId,
+      user_id: userId,
+    });
+
+    // User exists but is on cooldown
+    if (existingUser) {
+      return null;
+    }
+
+    // User doesn't exist - create new user with initial balance
+    try {
+      await this.collection.insertOne({
+        guild_id: guildId,
+        user_id: userId,
+        balance: earnAmount,
+        last_earned_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
+      } as OptionalId<EconomyUser>);
+
+      return earnAmount;
+    } catch (error: any) {
+      // Handle race condition: another insert happened simultaneously
+      if (error.code === 11000) {
+        // Document was created by another process, user is now on cooldown
+        return null;
+      }
+      throw error;
+    }
   }
 
   /**
