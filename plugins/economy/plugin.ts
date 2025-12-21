@@ -20,11 +20,7 @@ import type { CoreUtilsAPI } from "../core-utils/plugin";
 import type { EconomyUser, EconomyTransaction } from "./db/repository";
 import { createUserRepository, createTransactionRepository } from "./db/repository";
 import { createMessageEarnEvent } from "./events/message-earn";
-import { createBalanceCommand } from "./commands/balance";
-import { createLeaderboardCommand } from "./commands/leaderboard";
-import { createTransferCommand } from "./commands/transfer";
-import { createHistoryCommand } from "./commands/history";
-import { createAdminCommand } from "./commands/admin";
+import { createEconomyCommand } from "./commands";
 
 // ============ Configuration Schema ============
 
@@ -254,15 +250,7 @@ const plugin: Plugin<typeof configSchema> & { api?: EconomyAPI } = {
     ctx.registerEvent(createMessageEarnEvent(ctx, economyAPI));
 
     // Register commands
-    ctx.registerCommand(createBalanceCommand(ctx, economyAPI, api));
-    ctx.registerCommand(createLeaderboardCommand(ctx, economyAPI, api, userRepo));
-    ctx.registerCommand(createTransferCommand(ctx, economyAPI, api));
-
-    if (ctx.config.enableTransactionHistory) {
-      ctx.registerCommand(createHistoryCommand(ctx, economyAPI, api));
-    }
-
-    ctx.registerCommand(createAdminCommand(ctx, economyAPI, api, userRepo));
+    ctx.registerCommand(createEconomyCommand(ctx, economyAPI, api, userRepo));
 
     ctx.logger.info("Economy plugin loaded successfully!");
   },
