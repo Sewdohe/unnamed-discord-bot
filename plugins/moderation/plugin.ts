@@ -53,6 +53,16 @@ const configSchema = z.object({
       exemptRoles: z.array(z.string()).default([]).describe("Role IDs that can post invite links"),
       exemptChannels: z.array(z.string()).default([]).describe("Channel IDs where invites are allowed"),
     }).default({}).describe("Filter unauthorized Discord invite links"),
+    spamFilter: z.object({
+      enabled: z.boolean().default(false).describe("Enable spam detection (similar repeated messages)"),
+      similarityThreshold: z.number().min(0).max(100).default(80).describe("Percentage similarity required to consider messages as spam (0-100)"),
+      messageThreshold: z.number().min(2).max(20).default(5).describe("Number of similar messages to trigger spam detection"),
+      timeWindow: z.number().min(1).max(300).default(30).describe("Time window in seconds to check for spam"),
+      actions: z.array(z.enum(["delete", "warn", "timeout", "kick"])).default(["delete", "timeout"]).describe("Actions to take (can specify multiple): delete, warn, timeout, kick"),
+      timeoutDuration: z.string().default("10m").describe("Duration for timeout action (e.g., 10m, 1h, 1d)"),
+      exemptRoles: z.array(z.string()).default([]).describe("Role IDs that bypass spam detection"),
+      exemptChannels: z.array(z.string()).default([]).describe("Channel IDs where spam detection doesn't apply"),
+    }).default({}).describe("Detect and prevent spam (similar repeated messages)"),
   }).default({}).describe("Automatic moderation settings"),
   warnings: z.object({
     globalThresholds: z.array(z.object({
@@ -155,6 +165,16 @@ const plugin: Plugin<typeof configSchema> = {
           exemptRoles: [],
           exemptChannels: [],
         },
+        spamFilter: {
+          enabled: false,
+          similarityThreshold: 80,
+          messageThreshold: 5,
+          timeWindow: 30,
+          actions: ["delete", "timeout"],
+          timeoutDuration: "10m",
+          exemptRoles: [],
+          exemptChannels: [],
+        },
       },
       warnings: {
         globalThresholds: [],
@@ -202,7 +222,7 @@ const plugin: Plugin<typeof configSchema> = {
     initTempbanScheduler(ctx, api, moderationRepo);
 
     // Register auto-mod event handlers
-    if (ctx.config.autoMod.messageFilter.enabled || ctx.config.autoMod.inviteFilter.enabled) {
+    if (ctx.config.autoMod.messageFilter.enabled || ctx.config.autoMod.inviteFilter.enabled || ctx.config.autoMod.spamFilter.enabled) {
       ctx.registerEvent(autoModEvent(ctx, api, moderationRepo));
     }
 

@@ -3,6 +3,7 @@ import type { CoreUtilsAPI } from "../../core-utils/plugin";
 import type { GuildMember, User } from "discord.js";
 import type { ModerationRepository, CaseType } from "../db/repository";
 import { logToModLog, parseDuration } from "../utils/modlog";
+import { trackMessage, checkForSpam, clearUserHistory } from "../utils/spam-detector";
 
 // Import config type from main plugin
 type ModConfig = {
@@ -35,6 +36,16 @@ type ModConfig = {
       exemptRoles: string[];
       exemptChannels: string[];
     };
+    spamFilter: {
+      enabled: boolean;
+      similarityThreshold: number;
+      messageThreshold: number;
+      timeWindow: number;
+      actions: string[];
+      timeoutDuration: string;
+      exemptRoles: string[];
+      exemptChannels: string[];
+    };
   };
 };
 
@@ -52,6 +63,17 @@ export function autoModEvent(ctx: PluginContext<ModConfig>, api: CoreUtilsAPI, r
 
       const member = message.member as GuildMember;
       if (!member) return;
+
+      // Check spam filter first (before tracking message)
+      if (ctx.config.autoMod.spamFilter.enabled) {
+        const spamResult = await checkSpamFilter(ctx, api, repo, message, member);
+        if (spamResult) return; // Message was spam and handled
+      }
+
+      // Track message for spam detection (after checks, so we only track non-spam messages)
+      if (ctx.config.autoMod.spamFilter.enabled) {
+        trackMessage(message.guild.id, message.author.id, message.id, message.content);
+      }
 
       // Check message filter
       if (ctx.config.autoMod.messageFilter.enabled) {
@@ -182,6 +204,98 @@ async function checkInviteFilter(
       embeds: [api.embeds.warning(
         `Your message in **${message.guild.name}** was removed by auto-moderation.\n\n**Reason:** Unauthorized Discord invite\n**Actions:** ${actionsList}`,
         "Message Removed"
+      )],
+    });
+  } catch {
+    // User has DMs disabled
+  }
+
+  return true;
+}
+
+// ============ Spam Filter ============
+
+async function checkSpamFilter(
+  ctx: PluginContext<ModConfig>,
+  api: CoreUtilsAPI,
+  repo: ModerationRepository,
+  message: any,
+  member: GuildMember
+): Promise<boolean> {
+  const config = ctx.config.autoMod.spamFilter;
+
+  // Check exemptions
+  if (config.exemptChannels.includes(message.channel.id)) return false;
+  if (config.exemptRoles.some(roleId => member.roles.cache.has(roleId))) return false;
+
+  // Skip very short messages (less than 5 characters) - unlikely to be meaningful spam
+  if (message.content.length < 5) return false;
+
+  // Check for spam
+  const spamCheck = checkForSpam(
+    message.guild.id,
+    message.author.id,
+    message.content,
+    {
+      similarityThreshold: config.similarityThreshold,
+      messageThreshold: config.messageThreshold,
+      timeWindow: config.timeWindow,
+    }
+  );
+
+  if (!spamCheck.isSpam) return false;
+
+  ctx.logger.debug(
+    `Spam detected: ${message.author.tag} sent ${spamCheck.similarMessages} similar messages in ${config.timeWindow}s`
+  );
+
+  // Delete the current message
+  try {
+    await message.delete();
+  } catch (error) {
+    ctx.logger.error("Failed to delete spam message:", error);
+  }
+
+  // Delete matched spam messages
+  try {
+    const channel = message.channel;
+    if (channel.isTextBased()) {
+      for (const msgId of spamCheck.matchedMessages) {
+        try {
+          const msg = await channel.messages.fetch(msgId);
+          await msg.delete();
+        } catch {
+          // Message might already be deleted or not accessible
+        }
+      }
+    }
+  } catch (error) {
+    ctx.logger.error("Failed to delete spam messages:", error);
+  }
+
+  // Clear user's message history to prevent repeated triggers
+  clearUserHistory(message.guild.id, message.author.id);
+
+  // Take actions
+  const caseId = await takeAutoModAction(
+    ctx,
+    api,
+    repo,
+    member,
+    message.author,
+    config.actions,
+    config.timeoutDuration,
+    `AutoMod: Spam detected (${spamCheck.similarMessages} similar messages in ${config.timeWindow}s)`,
+    "automod_spam"
+  );
+
+  // Notify user
+  try {
+    const actionsList = config.actions.join(", ");
+    await message.author.send({
+      embeds: [api.embeds.warning(
+        `Your messages in **${message.guild.name}** were removed by auto-moderation.\n\n**Reason:** Spam detected (${spamCheck.similarMessages} similar messages)\n**Actions:** ${actionsList}`,
+        "Spam Detected"
       )],
     });
   } catch {

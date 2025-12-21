@@ -23,7 +23,7 @@ export interface ModCase extends Document {
   guild_id?: string;              // Guild ID for tempban processing
 }
 
-export type CaseType = "kick" | "ban" | "unban" | "timeout" | "warn" | "purge" | "lock" | "unlock" | "automod_filter" | "automod_invite" | "tempban";
+export type CaseType = "kick" | "ban" | "unban" | "timeout" | "warn" | "purge" | "lock" | "unlock" | "automod_filter" | "automod_invite" | "automod_spam" | "tempban";
 
 // ============ Repository ============
 
