@@ -180,7 +180,7 @@ export class UserRepository extends BaseRepository<EconomyUser> {
         ],
       },
       {
-        $inc: { balance: earnAmount },
+        $inc: { balance: earnAmount }, // $inc creates field with value if it doesn't exist
         $set: {
           last_earned_at: new Date(),
           updated_at: new Date(),
@@ -188,7 +188,7 @@ export class UserRepository extends BaseRepository<EconomyUser> {
         $setOnInsert: {
           guild_id: guildId,
           user_id: userId,
-          balance: earnAmount,
+          // Don't set balance here - let $inc handle it
           created_at: new Date(),
         },
       },

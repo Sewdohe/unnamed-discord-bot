@@ -17,7 +17,7 @@
 import { z } from "zod";
 import type { Plugin, PluginContext } from "@types";
 import type { CoreUtilsAPI } from "../core-utils/plugin";
-import type { EconomyUser, EconomyTransaction } from "./db/repository";
+import type { EconomyTransaction } from "./db/repository";
 import { createUserRepository, createTransactionRepository } from "./db/repository";
 import { createMessageEarnEvent } from "./events/message-earn";
 import { createEconomyCommand } from "./commands";
@@ -189,7 +189,7 @@ const plugin: Plugin<typeof configSchema> & { api?: EconomyAPI } = {
           return { success: false, reason: "Failed to deduct coins from sender" };
         }
 
-        const newReceiverBalance = await userRepo.incrementBalance(guildId, toUserId, amount);
+        await userRepo.incrementBalance(guildId, toUserId, amount);
 
         // Log transaction
         if (transactionRepo) {
